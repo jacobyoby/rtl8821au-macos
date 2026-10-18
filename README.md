@@ -183,11 +183,16 @@ Reference for the port is Linux `rtw88` (`rtw8821a.c`, `rtw8821a_table.c`,
 | Hardware reset + power-on sequence (`initchip`) | works, both polling steps pass |
 | 8051 firmware upload, `rtw8821a_fw.bin` (`fwload`) | works, checksum OK, firmware ready |
 | LLT table, MAC init: register table, queue pages, priorities, WMAC, EDCA, beacon, USB burst, ARFB (`stagetest 3`) | works, `CR=0x06ff`, `TXDMA_PQ_MAP=0xc5a0` |
-| Monitor RCR (`rtl_mac_set_monitor`, shared with 8812AU) | ported, not yet reachable (needs BB/RF first) |
-| BB / RF init, channel, calibration, TX power | **not ported yet** |
+| Efuse decode: MAC, crystal cap, PA/LNA options, BB swing (`rtl8821a_board_info`) | works |
+| BB + AGC tables with the rtw88 condition parser, crystal cap (`stagetest 4`) | works |
+| RF path A table, band switch to 2.4 GHz, post-RF MAC bits (`stagetest 5`) | works, `RF_A[0x18]` reads back the table value |
+| Channel switch 20 MHz, monitor RCR (`stagetest 7`) | works |
+| **Monitor-mode capture on 2.4 GHz (`monitor 6 10 out.pcap`)** | **works**: 4,340 frames in 10 s on channel 6, beacons with SSIDs, probe responses, RTS/CTS, block-acks. 42% FCS-clean (the RCR accepts CRC-error frames on purpose; no calibration yet) |
+| LCK / IQK calibration | stubbed, returns 0 so RX-only bring-up continues |
+| TX power from efuse, injection, scan / connect / internet | **not ported yet** |
 
-Unported steps return `-38` (`ENOSYS`) with a `[8821au] <step>: not ported yet`
-message, so `stagetest 4` and above stop cleanly.
+Unported steps print `[8821au] <step>: not ported yet`. Calibration is skipped
+with a message; TX power apply returns `ENOSYS` (it is a best-effort step).
 
 ### Layout of the port
 
@@ -197,8 +202,13 @@ message, so `stagetest 4` and above stop cleanly.
   list; `rtl_chip_probe(vid, pid)` picks the ops table.
 - `src/rtl8821au.c` — the 8821AU ops: hw reset, power sequences, CR enable,
   LLT, firmware download, MAC init (MAC table generated from rtw88's
-  `rtw8821a_table.c`); stubs for BB/RF/channel/cal/txpwr, with a checklist
-  at the top.
+  `rtw8821a_table.c`); checklist at the top.
+- `src/rtl8821au_phy.c` — efuse board decode, RF path A read/write (8821A
+  timing), the `rtw_parse_tbl_phy_cond` condition parser, BB/AGC/RF table
+  load, `switch_band`, `set_channel` (20 MHz path exercised, 40/80 carried
+  but untested), post-RF MAC bits.
+- `src/rtl8821au_tables.c` — `rtw8821a_agc`, `rtw8821a_bb`, `rtw8821a_rf_a`
+  generated from rtw88 (comments stripped, `0X` prefixes handled).
 - `src/fw_8821a_nic.c` — `rtw88/rtw8821a_fw.bin` from linux-firmware as a C
   array (sha256 in the file header; Realtek redistributable firmware licence).
 - `src/rtl_init.c` — the power-sequence interpreter is now generic
@@ -218,9 +228,10 @@ Per `rtw88` the four OUT pipes are high/beacon, VO/VI, BE/BK and management
 
 ### Next steps
 
-1. BB/AGC and RF path A tables from `rtw8821a_table.c`
-   (`rtw88xxa_phy_bb_config`, `rtw88xxa_phy_rf_config`).
-2. Band/channel switch (`rtw88xxa_switch_band`, `rtw88xxa_set_channel`) and
-   the post-RF MAC bits (HWSEQ, BAR mode, NAV, TX report), then `monitor`
-   on 2.4 GHz.
-3. Calibration and efuse TX power, then `scan` / `connect` / `alfa-netd`.
+1. Calibration (`rtw8821a_phy_calibration`: LCK + IQK) and the initial
+   gain / DIG setup, which should raise the FCS-clean rate.
+2. Efuse TX power (`rtw88xxa_set_tx_power_index`, `rtw8821a_txpwr_lmt`) and
+   a TX descriptor check for the 1x1 part, then `inject` and `scan`.
+3. Switch the tools from the `RTL_TX_EP_MGMT` macro to `ops->tx_ep_mgmt`
+   (0x09 on this part), then `connect` / `alfa-netd`.
+4. 5 GHz: `switch_band(5G)` is ported but untested.

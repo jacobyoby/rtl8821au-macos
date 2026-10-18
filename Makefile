@@ -27,7 +27,8 @@ CORE := src/rtl_usb.c src/rtl_ids.c src/rtl_init.c src/rtl_fw.c \
         src/fw_8812a_nic.c src/fw_8821a_nic.c \
         src/rtl_efuse.c src/rtl_led.c src/rtl_mac.c src/rtl_bb.c \
         src/rtl_rf.c src/rtl_cal.c src/rtl_txpwr.c \
-        src/rtl_tx.c src/rtl_chip.c src/rtl8821au.c
+        src/rtl_tx.c src/rtl_chip.c src/rtl8821au.c \
+        src/rtl8821au_phy.c src/rtl8821au_tables.c
 
 # Bring-up + Empfangspfad (alles, was rtl_hal_full_init nutzt).
 HAL := src/rtl_hal.c src/rtl_rx.c $(CORE)

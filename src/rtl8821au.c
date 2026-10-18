@@ -24,10 +24,12 @@
  *                                    WMAC, EDCA, beacon, USB burst, ARFB,
  *                                    MACTXEN|MACRXEN)
  *   [x] monitor RCR                  rtl_mac_set_monitor (same registers)
- *   [ ] BB init                      rtw8821a_bb_tbl / rtw8821a_agc_tbl
- *   [ ] RF init                      rtw8821a_rf_a_tbl (path A only, 1x1)
- *   [ ] channel / bandwidth          rtw88xxa_set_channel
- *   [ ] LCK / IQK                    rtw8821a_phy_calibration
+ *   [x] BB init                      rtl8821au_phy.c: bb + agc tables with the
+ *                                    rtw88 condition parser, crystal cap
+ *   [x] RF init                      rf path A table, switch_band(2G), post-RF
+ *                                    MAC bits
+ *   [x] channel / bandwidth          rtw88xxa_set_channel, 20 MHz verified path
+ *   [ ] LCK / IQK                    rtw8821a_phy_calibration (skipped, returns 0)
  *   [ ] TX power from efuse          rtw8821a_txpwr_lmt + efuse layout
  *   [ ] TX descriptor                verify 88xxA TX desc for the 1x1 part
  *   [ ] tools use ops->tx_ep_mgmt    associate/alfa_netd/inject still pass the
@@ -39,6 +41,7 @@
 #include "rtl_usb.h"
 #include "rtl_tx.h"
 #include "rtl_mac.h"
+#include "rtl8821au.h"
 #include <stdio.h>
 #include <unistd.h>
 
@@ -578,17 +581,15 @@ static int not_ported(const char *step) {
     printf("[8821au] %s: not ported yet (see rtw88 rtw8821a.c / rtw88xxa.c)\n", step);
     return RTL_ENOSYS;
 }
-static int np_bb_init    (libusb_device_handle *h, int v)        { (void)h; (void)v; return not_ported("bb_init"); }
-static int np_rf_init    (libusb_device_handle *h, int v)        { (void)h; (void)v; return not_ported("rf_init"); }
-static int np_set_channel(libusb_device_handle *h, int c, int b) { (void)h; (void)c; (void)b; return not_ported("set_channel"); }
-static int np_lck        (libusb_device_handle *h, int v)        { (void)h; (void)v; return not_ported("lck"); }
-static int np_iqk        (libusb_device_handle *h, int v)        { (void)h; (void)v; return not_ported("iqk"); }
+static int skip_lck      (libusb_device_handle *h, int v)        { (void)h; (void)v; printf("[8821au] lck: not ported, skipped\n"); return 0; }
+static int skip_iqk      (libusb_device_handle *h, int v)        { (void)h; (void)v; printf("[8821au] iqk: not ported, skipped\n"); return 0; }
 static int np_txpwr_apply(libusb_device_handle *h, int c, int v) { (void)h; (void)c; (void)v; return not_ported("txpwr_apply"); }
 
 static void rtl8821au_dbg_dump(libusb_device_handle *h) {
-    printf("[hal] Readback: SYS_CFG=0x%08x CR=0x%04x MCUFWDL=0x%08x\n",
+    printf("[hal] Readback: SYS_CFG=0x%08x CR=0x%04x MCUFWDL=0x%08x RCR=0x%08x RF_A[0x18]=0x%05x\n",
            rtl_read32(h, REG_SYS_CFG, NULL), rtl_read16(h, REG_CR, NULL),
-           rtl_read32(h, REG_MCUFWDL, NULL));
+           rtl_read32(h, REG_MCUFWDL, NULL), rtl_read32(h, 0x0608, NULL),
+           rtl8821a_rf_read(h, 0x18, 0xFFFFF));
 }
 
 const rtl_chip_ops rtl8821au_ops = {
@@ -599,12 +600,12 @@ const rtl_chip_ops rtl8821au_ops = {
     .fw_download    = rtl8821au_fw_download,
     .fw_active_mode = rtl_fw_set_active_mode,   /* same H2C mailbox as 8812A */
     .mac_init       = rtl8821au_mac_init,
-    .bb_init        = np_bb_init,
-    .rf_init        = np_rf_init,
-    .set_channel    = np_set_channel,
+    .bb_init        = rtl8821au_bb_init,
+    .rf_init        = rtl8821au_rf_init,
+    .set_channel    = rtl8821au_set_channel,
     .set_monitor    = rtl_mac_set_monitor,       /* same RCR/MSR/RXFLTMAP registers */
-    .lck            = np_lck,
-    .iqk            = np_iqk,
+    .lck            = skip_lck,
+    .iqk            = skip_iqk,
     .txpwr_apply    = np_txpwr_apply,
     .txpwr_readback = NULL,                     /* optional (TRY) */
     .led_on         = NULL,                     /* optional: LED register differs, port later */
