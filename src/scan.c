@@ -9,11 +9,12 @@
  * garbled SSIDs and impossible BSSIDs. Signal is the median of the samples
  * taken on the AP's own channel, Peak the strongest one.
  *
- * Usage: ./scan [-a] [ms_per_channel]   (default 500 ms; -a = every BSSID)
+ * Usage: ./scan [-a] [--no-color] [ms_per_channel]   (default 500 ms; -a = every BSSID)
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "rtl_usb.h"
 #include "rtl_hal.h"
 #include "rtl_rf.h"
@@ -177,6 +178,22 @@ static int named_sibling(const scan_ctx *s, int i) {
     return best;
 }
 
+/* ANSI colors, only on a terminal and without NO_COLOR (no-color.org).
+ * Codes go outside the printf field widths, so columns stay aligned. */
+static int g_color;
+#define C(code) (g_color ? "\033[" code "m" : "")
+#define C_OFF   C("0")
+#define C_BOLD  C("1")
+#define C_DIM   C("2")
+
+/* green: solid link, yellow: usable, red: marginal */
+static const char *sig_color(int dbm) {
+    if (dbm == RTL_RSSI_NONE) return C_DIM;
+    if (dbm >= -60) return C("32");
+    if (dbm >= -75) return C("33");
+    return C("31");
+}
+
 static void fmt_dbm(char *buf, size_t sz, int dbm, int adj) {
     if (dbm == RTL_RSSI_NONE) snprintf(buf, sz, "?");
     else                      snprintf(buf, sz, adj ? ">%d" : "%d", dbm);
@@ -184,8 +201,8 @@ static void fmt_dbm(char *buf, size_t sz, int dbm, int adj) {
 
 /* -a: every BSSID on its own row. */
 static void print_all(const scan_ctx *s) {
-    printf("\n\n%-32s %-17s %5s %6s %5s  %-16s %s\n",
-           "SSID", "BSSID", "Chan", "Signal", "Peak", "Security", "Same router as");
+    printf("\n\n%s%-32s %-17s %5s %6s %5s  %-16s %s%s\n", C_BOLD,
+           "SSID", "BSSID", "Chan", "Signal", "Peak", "Security", "Same router as", C_OFF);
     printf("------------------------------------------------------------------------------------------------------------\n");
     int any_adj = 0, n_hidden = 0, n_revealed = 0, n_sibling = 0;
     for (int i = 0; i < s->count; i++) {
@@ -205,11 +222,16 @@ static void print_all(const scan_ctx *s) {
                  (n->hidden && n->ssid[0]) ? ", hidden" : "");
         int sib = n->ssid[0] ? -1 : named_sibling(s, i);
         n_sibling += sib >= 0;
-        printf("%-32s %02x:%02x:%02x:%02x:%02x:%02x %5d %6s %5s  %-16s %s\n",
-               name, n->bssid[0],n->bssid[1],n->bssid[2],n->bssid[3],n->bssid[4],n->bssid[5],
-               n->channel, sig, peak, sec, sib >= 0 ? s->nets[sib].ssid : "");
+        printf("%s%-32s%s %02x:%02x:%02x:%02x:%02x:%02x %5d %s%6s%s %s%5s%s  %s%-16s%s %s%s%s\n",
+               n->ssid[0] ? "" : C_DIM, name, C_OFF,
+               n->bssid[0],n->bssid[1],n->bssid[2],n->bssid[3],n->bssid[4],n->bssid[5],
+               n->channel, sig_color(dbm), sig, C_OFF,
+               sig_color(adj ? dbm : n->peak_dbm), peak, C_OFF,
+               n->privacy ? "" : C("33"), sec, C_OFF,
+               C_DIM, sib >= 0 ? s->nets[sib].ssid : "", C_OFF);
     }
-    printf("\n%d networks found (Signal/Peak in dBm; %ld frames with CRC error dropped).\n",
+    printf("\n%s", C_DIM);
+    printf("%d networks found (Signal/Peak in dBm; %ld frames with CRC error dropped).\n",
            s->count, s->crc_dropped);
     if (n_hidden)
         printf("%d hidden networks, %d named from probe responses or association requests\n"
@@ -221,6 +243,7 @@ static void print_all(const scan_ctx *s) {
                n_sibling);
     if (any_adj)
         printf(">dBm: only heard from a neighbouring channel, real level is higher.\n");
+    printf("%s", C_OFF);
 }
 
 static void net_name(const net_t *n, char name[33]) {
@@ -260,8 +283,8 @@ static void print_grouped(const scan_ctx *s) {
         revealed[rep[i]] |= s->nets[i].hidden && s->nets[i].ssid[0];
     }
 
-    printf("\n\n%-32s %6s  %-12s %3s  %-16s %s\n",
-           "SSID", "Signal", "Channels", "APs", "Security", "Same router");
+    printf("\n\n%s%-32s %6s  %-12s %3s  %-16s %s%s\n", C_BOLD,
+           "SSID", "Signal", "Channels", "APs", "Security", "Same router", C_OFF);
     printf("----------------------------------------------------------------------------------------\n");
     for (int i = 0; i < s->count; i++) {
         if (rep[i] != i) continue;
@@ -284,20 +307,24 @@ static void print_grouped(const scan_ctx *s) {
         snprintf(sec, sizeof(sec), "%s%s", n->privacy ? "WPA/WEP" : "open",
                  revealed[i] ? ", hidden" : "");
         if (hid[i]) snprintf(extra, sizeof(extra), "+%d hidden", hid[i]);
-        printf("%-32s %6s  %-12s %3d  %-16s %s\n", name, sig, chs, aps[i], sec, extra);
+        printf("%s%-32s%s %s%6s%s  %-12s %3d  %s%-16s%s %s%s%s\n",
+               n->ssid[0] ? "" : C_DIM, name, C_OFF, sig_color(dbm), sig, C_OFF,
+               chs, aps[i], n->privacy ? "" : C("33"), sec, C_OFF, C_DIM, extra, C_OFF);
         rows++;
     }
-    printf("\n%d networks from %d BSSIDs (Signal: strongest AP, median dBm; %ld frames\n"
+    printf("\n%s", C_DIM);
+    printf("%d networks from %d BSSIDs (Signal: strongest AP, median dBm; %ld frames\n"
            "with CRC error dropped). ./scan -a lists every BSSID.\n",
            rows, s->count, s->crc_dropped);
     if (folded)
         printf("+N hidden: %d hidden SSIDs whose BSSID shows they belong to that router.\n", folded);
     if (any_adj)
         printf(">dBm: only heard from a neighbouring channel, real level is higher.\n");
+    printf("%s", C_OFF);
 }
 
 static void usage(const char *argv0) {
-    printf("Usage: %s [-a] [ms_per_channel]\n"
+    printf("Usage: %s [-a] [--no-color] [ms_per_channel]\n"
            "  Scan 2.4- and 5-GHz channels for beacons and probe responses and\n"
            "  list the networks, strongest first: one row per network name, with\n"
            "  hidden SSIDs of the same router folded in. -a lists every BSSID\n"
@@ -306,15 +333,21 @@ static void usage(const char *argv0) {
            "  Hidden SSIDs are filled in passively when a client probes for or\n"
            "  joins the network during the scan; a longer dwell catches more.\n"
            "  Otherwise 'Same router as' names the visible network whose BSSID\n"
-           "  shows it comes from the same router.\n",
+           "  shows it comes from the same router.\n"
+           "  Signal colors: green >= -60 dBm, yellow >= -75, red below; open\n"
+           "  networks yellow. Off when not a terminal, with NO_COLOR set, or\n"
+           "  with --no-color.\n",
            argv0);
 }
 
 int main(int argc, char **argv) {
     int dwell = 500, all = 0, have_dwell = 0;
+    const char *nc = getenv("NO_COLOR");
+    g_color = isatty(STDOUT_FILENO) && !(nc && nc[0]);
     for (int a = 1; a < argc; a++) {
         if (!strcmp(argv[a], "-h") || !strcmp(argv[a], "--help")) { usage(argv[0]); return 0; }
         if (!strcmp(argv[a], "-a") || !strcmp(argv[a], "--all")) { all = 1; continue; }
+        if (!strcmp(argv[a], "--no-color")) { g_color = 0; continue; }
         char *end = NULL;
         long ms = strtol(argv[a], &end, 10);
         if (have_dwell || !end || *end || ms <= 0 || ms > 60000) { usage(argv[0]); return 2; }
