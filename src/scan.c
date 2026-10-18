@@ -69,7 +69,7 @@ int main(int argc, char **argv) {
          * reiner RX-Betrieb (kein TX), die kanalabhaengige TX-Power-Nachfuehrung
          * von rtl_hal_set_channel() waere hier wirkungslos. Fuer spaetere TX-
          * faehige Tools mit Channel-Hopping ist rtl_hal_set_channel() gedacht. */
-        if (rtl_rf_set_channel(h, chans[i], 0) != 0) continue;
+        if (rtl_rx_bound_ops()->set_channel(h, chans[i], 0) != 0) continue;   /* chip ops, not the 8812AU routine */
         rtl_rx_poll(h, dwell, scan_cb, &s);
         printf("\r  Kanal %3d  gefunden: %d Netze ", chans[i], s.count); fflush(stdout);
     }

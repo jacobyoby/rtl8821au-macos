@@ -7,6 +7,7 @@
 #include "rtl_cal.h"
 #include "rtl_txpwr.h"
 #include "rtl_tx.h"
+#include "rtl_rx.h"
 #include <stdio.h>
 
 #define RND8(x) (((x) + 7) & ~7u)

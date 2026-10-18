@@ -306,6 +306,11 @@ int main(int argc, char **argv) {
     printf("\nNaechster Schritt IE5: utun-Bridge + DHCP (Daemon, braucht sudo).\n");
 
 done:
+    {   /* leave cleanly: deauth our own association (reason 3) so the next connect starts clean */
+        uint8_t fr[26] = {0xC0, 0, 0, 0}; memcpy(fr + 4, g_bssid, 6); memcpy(fr + 10, g_sa, 6); memcpy(fr + 16, g_bssid, 6);
+        fr[22] = 0; fr[23] = 0; fr[24] = 3; fr[25] = 0;
+        for (int i = 0; i < 2; i++) { rtl_tx_inject(h, fr, 26, RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt); usleep(20000); }
+    }
     rtl_rx_unbind();
     if (claimed) libusb_release_interface(h, 0);
     libusb_close(h); libusb_exit(ctx);

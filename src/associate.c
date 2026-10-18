@@ -29,7 +29,16 @@ static int parse_mac(const char *s, uint8_t *m) {
                   &m[0],&m[1],&m[2],&m[3],&m[4],&m[5]) == 6;
 }
 
+static int g_acks = 0;
 static void cb(const uint8_t *f, uint32_t len, void *v) {
+    if (len >= 10 && f[0] == 0xd4 && !memcmp(f + 4, g_sa, 6)) { g_acks++; return; }   /* ACK to us */
+    if (len >= 24 && !memcmp(f + 10, g_bssid, 6) && !memcmp(f + 4, g_sa, 6)) {
+        static int logged = 0;
+        if (logged < 12) { logged++; printf("    <- from AP to us: fc=0x%02x%02x len=%u%s", f[1], f[0], len,
+            (f[0]==0xb0)?" (auth)":(f[0]==0x10)?" (assoc-resp)":(f[0]==0xc0)?" (deauth)":(f[0]==0xa0)?" (disassoc)":(f[0]==0x30)?" (reassoc-resp)":"");
+            if ((f[0]==0xc0 || f[0]==0xa0) && len >= 26) printf(" reason=%u", f[24] | (f[25] << 8));
+            printf("%s\n", (f[1] & 0x08) ? " [retry]" : ""); }
+    }
     assoc_ctx *c = (assoc_ctx *)v;
     if (len < 24) return;
     uint8_t fc = f[0];
@@ -58,10 +67,22 @@ int main(int argc, char **argv) {
 
     rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
 
-    if (rtl_hal_full_init(h, channel, 0, 0) != 0) { printf("Init fehlgeschlagen.\n"); goto done; }
+    int cal = (argc > 4) ? atoi(argv[4]) : 0;        /* 1 = run IQK like rtl_wpa_connect */
+    int st  = (argc > 5) ? atoi(argv[5]) : 0;        /* bit0: station RCR, bit1: MSR+REG_BSSID (rtl_wpa setup) */
+    if (rtl_hal_full_init(h, channel, cal, 0) != 0) { printf("Init fehlgeschlagen.\n"); goto done; }
 
     /* Our own MAC into the MACID register -> hardware auto-ACK for responses to us. */
     rtl_reg_write(h, REG_MACID, g_sa, 6);
+    if (st & 2) {
+        rtl_reg_write(h, 0x0618, g_bssid, 6);                          /* REG_BSSID */
+        uint8_t msr = rtl_read8(h, 0x0102, NULL);
+        rtl_write8(h, 0x0102, (uint8_t)((msr & 0xFC) | 0x02));         /* MSR port0 = station */
+    }
+    if (st & 1) {
+        uint32_t rcr = (1u<<26)|(1u<<13)|(1u<<1)|(1u<<2)|(1u<<3)|(1u<<6)|(1u<<7)|(1u<<14)|(1u<<28)|(1u<<29)|(1u<<30)|(1u<<31);
+        rtl_write32(h, 0x0608, rcr);                                   /* rtl_wpa station RCR */
+    }
+    printf("Setup: cal=%d station-flags=%d RCR=0x%08x MSR=0x%02x\n", cal, st, rtl_read32(h, 0x0608, NULL), rtl_read8(h, 0x0102, NULL));
 
     assoc_ctx c = { -1, -1, 0 };
 
@@ -108,6 +129,27 @@ int main(int argc, char **argv) {
            c.assoc_status, c.assoc_status==0?"ASSOZIIERT":"abgelehnt", c.aid);
     if (c.assoc_status == 0)
         printf("\n==> IE2 OK: mit dem AP assoziiert. Naechster Schritt: WPA2-Handshake (IE3).\n");
+    if ((st & 8) && c.assoc_status == 0) {
+        int tep  = (argc > 6) ? (int)strtoul(argv[6], NULL, 16) : rtl_rx_bound_ops()->tx_ep_mgmt;
+        int tqs  = (argc > 7) ? (int)strtoul(argv[7], NULL, 16) : RTL_QSLT_VO;
+        uint8_t nd[24] = {0x48, 0x01, 0, 0};    /* null data, ToDS */
+        memcpy(nd + 4, g_bssid, 6); memcpy(nd + 10, g_sa, 6); memcpy(nd + 16, g_bssid, 6);
+        int ok = 0, err = 0; g_acks = 0;
+        for (int i = 0; i < 20; i++) {
+            int r = rtl_tx_inject(h, nd, 24, RTL_RATE_6M, (uint8_t)tqs, (uint8_t)tep);
+            if (r == 0) ok++; else err++;
+            rtl_rx_poll(h, 40, cb, &c);
+        }
+        printf("Null-data TX test: ep=0x%02x qsel=0x%02x  sent ok=%d err=%d  ACKs from AP to us=%d\n", tep, tqs, ok, err, g_acks);
+    }
+    if ((st & 4) && c.assoc_status == 0) {
+        /* leave cleanly: deauthenticate our own association (reason 3 = station leaving) */
+        uint8_t da[26] = {0xC0, 0, 0, 0}; memcpy(da + 4, g_bssid, 6); memcpy(da + 10, g_sa, 6); memcpy(da + 16, g_bssid, 6);
+        da[22] = 0; da[23] = 0; da[24] = 3; da[25] = 0;
+        int r = rtl_tx_inject(h, da, 26, RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt);
+        rtl_rx_poll(h, 100, cb, &c);
+        printf("Leave: deauth (reason 3) sent to AP, rc=%d\n", r);
+    }
 
 done:
     rtl_rx_unbind();

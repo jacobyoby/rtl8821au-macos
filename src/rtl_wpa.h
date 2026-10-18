@@ -16,6 +16,7 @@ typedef struct {
     uint8_t kck[16];
     uint8_t kek[16];
     int     have_gtk;
+    int     aid;        /* association ID from the Assoc Response (for the beacon TIM) */
 } wpa_keys_t;
 
 /* Vollstaendige WPA2-PSK-Verbindung auf 'channel' mit 'bssid'/'ssid'/'psk'.
@@ -25,5 +26,12 @@ typedef struct {
 int rtl_wpa_connect(libusb_device_handle *h, int channel,
                     const uint8_t bssid[6], const char *ssid, const char *psk,
                     wpa_keys_t *k, int verbose);
+
+/* Leave the AP cleanly: deauthenticate our own association (reason 3,
+ * "station is leaving"). Without this the AP keeps our MAC in state 3 and
+ * answers the NEXT connect's auth/assoc with deauth reason 1/6 (observed on
+ * a consumer AP: every second connect failed). Call on every exit path
+ * after rtl_wpa_connect() succeeded (or at least authenticated). */
+void rtl_wpa_leave(libusb_device_handle *h);
 
 #endif /* RTL_WPA_H */

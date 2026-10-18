@@ -56,6 +56,11 @@ static long c_bcast_seen = 0, c_bcast_decfail = 0; /* broadcast frames from the 
 static long c_arp_reply_any = 0;   /* diagnostic: ANY ARP reply, regardless of the queried IP */
 static long c_dup_dropped = 0;     /* 802.11 retry duplicates filtered out (see on_frame) */
 static long c_gtk_rekey_seen = 0, c_gtk_rekey_acked = 0; /* Group Key Handshake (GTK rekey) seen/acked */
+static int     g_pend_arp = 0;          /* ARP reply queued by on_frame, sent from the main loop */
+static uint8_t g_pend_arp_mac[6], g_pend_arp_ip[4];
+static long c_ack_to_us = 0;      /* 802.11 ACK frames with RA == us (needs RCR_ACF) */
+static int  g_tim_set = 0;         /* beacon TIM bit for our AID (see on_frame) */
+static long c_keepalive = 0;
 static long c_beacon_seen = 0;     /* Beacons from our BSSID -- proves RX hardware is alive even if unicast stalls */
 static long c_arp_req_answered = 0; /* ARP-who-has requests for our own IP that we answered */
 /* Routing-Sicherung, damit wir das Netz nie kaputt zuruecklassen. */
@@ -353,6 +358,7 @@ static void on_frame(const uint8_t *f, uint32_t len, void *v) {
      * not a self-initiated disconnect) for this adapter's MAC. addr2 (TA) is
      * the BSSID for AP-originated management frames, same offset as the
      * fromDS BSSID check below. */
+    if (fc0 == 0xD4 && len >= 10 && memcmp(f + 4, K.sa, 6) == 0) { c_ack_to_us++; return; }   /* ACK to us */
     if ((fc0 & 0xFC) == 0xC0 || (fc0 & 0xFC) == 0xA0) {   /* Deauth / Disassoc */
         if (len >= 26 && memcmp(f+10, K.bssid, 6) == 0) {
             uint16_t reason = f[24] | (f[25] << 8);
@@ -362,7 +368,33 @@ static void on_frame(const uint8_t *f, uint32_t len, void *v) {
         return;
     }
 
-    if (fc0 == 0x80 && len >= 24 && memcmp(f+16, K.bssid, 6) == 0) { c_beacon_seen++; return; } /* Beacon, addr3=BSSID */
+    if (fc0 == 0x80 && len >= 24 && memcmp(f+16, K.bssid, 6) == 0) {   /* Beacon, addr3=BSSID */
+        c_beacon_seen++;
+        /* TIM (IE 5): is the AP holding buffered unicast for our AID? That is
+         * what an AP does when it believes we are in power-save -- the exact
+         * "unicast silently stops" symptom. */
+        if (K.aid > 0 && len > 36 + 4) {
+            const uint8_t *b = f + 36; int rem = (int)len - 36 - 4;
+            while (rem >= 2) {
+                int eid = b[0], el = b[1]; if (el + 2 > rem) break;
+                if (eid == 5 && el >= 4) {
+                    int bmc = b[4]; int off = (bmc & 0xFE) * 8;          /* bitmap offset in bits */
+                    int bit = K.aid - off; int set = 0;
+                    if (bit >= 0 && bit / 8 < el - 3) set = (b[5 + bit / 8] >> (bit & 7)) & 1;
+                    static int last_set = -1;
+                    if (set != last_set) {
+                        fprintf(stderr, "[tim] AP %s unicast for us (AID %d, DTIM count %d)\n",
+                                set ? "IS BUFFERING" : "has nothing buffered for", K.aid, b[2]);
+                        last_set = set;
+                    }
+                    g_tim_set = set;
+                    break;
+                }
+                b += 2 + el; rem -= 2 + el;
+            }
+        }
+        return;
+    }
 
     if ((fc0 & 0x0C) != 0x08) return;               /* data */
     if (!(fc1 & 0x40)) return;                        /* protected */
@@ -413,7 +445,11 @@ static void on_frame(const uint8_t *f, uint32_t len, void *v) {
             /* ARP-Request (who-has) an unsere eigene IP -- siehe arp_reply(). */
             int have_ip = g_our_ip[0]|g_our_ip[1]|g_our_ip[2]|g_our_ip[3];
             if (have_ip && !memcmp(pl+24, g_our_ip, 4)) {
-                arp_reply(frame_h, pl+8, pl+14);
+                /* Do not transmit from inside the RX callback (libusb: no
+                 * synchronous transfer from within a transfer callback);
+                 * queue it, the main loop sends it right after the poll. */
+                memcpy(g_pend_arp_mac, pl+8, 6); memcpy(g_pend_arp_ip, pl+14, 4);
+                g_pend_arp = 1;
                 c_arp_req_answered++;
             }
         }
@@ -499,7 +535,7 @@ static int scan_for_ssid(libusb_device_handle *h, const char *ssid, int *out_cha
          * Verbindungskanal ohnehin per rtl_hal_full_init() (inkl. TX-Power)
          * neu aufsetzt -- die TX-Power fuer die hier durchlaufenen Kanaele
          * spielt nie eine Rolle, da waehrend des Scans nie gesendet wird. */
-        if (rtl_rf_set_channel(h, chans[i], 0) != 0) continue;
+        if (rtl_rx_bound_ops()->set_channel(h, chans[i], 0) != 0) continue;   /* chip ops, not the 8812AU routine */
         rtl_rx_poll(h, 250, ssid_scan_cb, &s);
         printf("\r  Kanal %2d ...", chans[i]); fflush(stdout);
         if (s.found) { printf("\n"); *out_channel = chans[i]; memcpy(out_bssid, s.bssid, 6); return 0; }
@@ -594,16 +630,25 @@ int main(int argc, char **argv) {
       long enc_replies = c_arp_reply_any;
       printf("  Antworten: %ld\n", enc_replies);
 
-      printf("ARP-Isolationstest B: sende 5x ARP-who-has 192.168.178.1 (PLAIN/unencrypted broadcast) ...\n");
-      for (int t=0;t<5;t++){ arp_request_plain(h,probe_ip); rtl_rx_poll(h,300,on_frame,h); }
-      long plain_replies = c_arp_reply_any - enc_replies;
-      printf("  Antworten: %ld\n", plain_replies);
+      /* Test B sends an UNENCRYPTED data frame after the keys are installed.
+       * That is a protocol violation; WPA3-transition / PMF-capable APs (seen
+       * live on an eero-style AP) answer it with deauth reason 2 and drop the
+       * association, so it is opt-in now: ALFA_PLAIN_TEST=1. */
+      long plain_replies = 0;
+      if (getenv("ALFA_PLAIN_TEST")) {
+        printf("ARP-Isolationstest B: sende 5x ARP-who-has 192.168.178.1 (PLAIN/unencrypted broadcast) ...\n");
+        for (int t=0;t<5;t++){ arp_request_plain(h,probe_ip); rtl_rx_poll(h,300,on_frame,h); }
+        plain_replies = c_arp_reply_any - enc_replies;
+        printf("  Antworten: %ld\n", plain_replies);
+      } else {
+        printf("ARP-Isolationstest B (PLAIN) uebersprungen: ALFA_PLAIN_TEST=1 zum Aktivieren (APs mit PMF deauthen sonst).\n");
+      }
 
       if (enc_replies>0)
         printf("  -> Encrypted broadcast TX funktioniert. Problem ist DHCP/Server-spezifisch.\n");
       else if (plain_replies>0)
         printf("  -> UNENCRYPTED broadcast TX funktioniert, ENCRYPTED nicht -> Bug in rtl_ccmp_encrypt_frame.\n");
-      else
+      else if (getenv("ALFA_PLAIN_TEST"))
         printf("  -> Auch PLAIN broadcast TX bekommt keine Antwort -> genereller Broadcast-Data-TX-Fehler\n"
                "     (unabhaengig von Verschluesselung; evtl. Policy-Drop unverschluesselter Data-Frames\n"
                "      im Netz ist ebenfalls moeglich und wuerde dieses Ergebnis erklaeren).\n");
@@ -702,13 +747,23 @@ int main(int argc, char **argv) {
         for(int r=0;r<6 && !g_have_gw_mac;r++) rtl_rx_poll(h,150,on_frame,h); }
     printf("Gateway-MAC: %s\n", g_have_gw_mac?"ok":"unbekannt (nutze Broadcast)");
 
+    { uint32_t rcr = rtl_read32(h, 0x0608, NULL) | (1u << 12);   /* RCR_ACF: see ACKs addressed to us (diagnostic) */
+      rtl_write32(h, 0x0608, rcr); }
     printf("\nBridge laeuft. Teste z.B.:  ping -c3 %u.%u.%u.%u\n",
            g_gw_ip[0],g_gw_ip[1],g_gw_ip[2],g_gw_ip[3]);
     printf("(Erste Fassung — Routing/DHCP-Feinschliff nach deinem Testlauf.)\n");
     uint8_t ub[2100];
     time_t last = time(NULL);
+    long last_tx_count = c_tx;
     while (!g_stop) {
         rtl_rx_poll(h, 20, on_frame, h);  /* h, not NULL: on_frame needs it to ack a GTK rekey */
+        if (g_pend_arp) {
+            g_pend_arp = 0;
+            arp_reply(h, g_pend_arp_mac, g_pend_arp_ip);
+            fprintf(stderr, "[arp] replied to who-has %u.%u.%u.%u from %02x:%02x:%02x:%02x:%02x:%02x (sent from main loop)\n",
+                    g_our_ip[0], g_our_ip[1], g_our_ip[2], g_our_ip[3],
+                    g_pend_arp_mac[0], g_pend_arp_mac[1], g_pend_arp_mac[2], g_pend_arp_mac[3], g_pend_arp_mac[4], g_pend_arp_mac[5]);
+        }
         for (;;) {                                  /* utun leerlesen, nicht nur 1 Paket */
             int n = (int)read(g_utun_fd, ub, sizeof(ub));
             if (n <= 4) break;
@@ -721,16 +776,27 @@ int main(int argc, char **argv) {
         }
         if (time(NULL) != last) {
             last = time(NULL);
-            rtl_txpwr_thermal_track(h);   /* re-check/apply thermal compensation once per second */
+            /* Keepalive / wake: a null-data frame with PM=0 tells the AP we are
+             * awake. If the TIM says it buffers for us, this makes it flush. */
+            if (c_tx == last_tx_count || g_tim_set) {
+                uint8_t nd[24] = {0x48, 0x01, 0, 0};
+                memcpy(nd + 4, K.bssid, 6); memcpy(nd + 10, K.sa, 6); memcpy(nd + 16, K.bssid, 6);
+                rtl_tx_inject(h, nd, 24, RTL_RATE_6M, RTL_QSLT_VO, rtl_rx_bound_ops()->tx_ep_mgmt);
+                c_keepalive++;
+            }
+            last_tx_count = c_tx;
+            if (rtl_rx_bound_ops()->chip == RTL_CHIP_8812AU)
+                rtl_txpwr_thermal_track(h);   /* 8812AU only: RFE-3 tables, RF 0x42 thermal meter */
             int trc = 0;
-            uint32_t therm = rtl_rf_read(h, 0, 0x42, &trc);   /* RF_T_METER_8812A; real field is bits[15:10] */
-            fprintf(stderr, "[stat] utun_out=%ld tx=%ld  rx_ip=%ld  icmp_out=%ld icmp_in=%ld  uni_seen=%ld uni_decfail=%ld  dup_dropped=%ld  gtk_rekey_seen=%ld acked=%ld  thermal=0x%02x  beacon_seen=%ld  arp_req_answered=%ld\n",
-                    c_utun_out, c_tx, c_rx_ip, c_icmp_out, c_icmp_in, c_uni_seen, c_uni_decfail, c_dup_dropped,
+            uint32_t therm = (rtl_rx_bound_ops()->chip == RTL_CHIP_8812AU) ? rtl_rf_read(h, 0, 0x42, &trc) : 0;   /* RF_T_METER_8812A; real field is bits[15:10] */
+            fprintf(stderr, "[stat] utun_out=%ld tx=%ld acks=%ld ka=%ld tim=%d  rx_ip=%ld  icmp_out=%ld icmp_in=%ld  uni_seen=%ld uni_decfail=%ld  dup_dropped=%ld  gtk_rekey_seen=%ld acked=%ld  thermal=0x%02x  beacon_seen=%ld  arp_req_answered=%ld\n",
+                    c_utun_out, c_tx, c_ack_to_us, c_keepalive, g_tim_set, c_rx_ip, c_icmp_out, c_icmp_in, c_uni_seen, c_uni_decfail, c_dup_dropped,
                     c_gtk_rekey_seen, c_gtk_rekey_acked, (therm & 0xfc00) >> 10, c_beacon_seen, c_arp_req_answered);
         }
     }
 
 done:
+    rtl_wpa_leave(h);                  /* deauth our own association so the next connect starts clean */
     rtl_rx_unbind();
     restore_routing();                 /* Default-Route zuruecksetzen, Netz nie kaputt lassen */
     if (g_utun_fd>=0) close(g_utun_fd);

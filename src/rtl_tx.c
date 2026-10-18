@@ -44,12 +44,25 @@ int rtl_tx_inject(libusb_device_handle *h, const uint8_t *frame, int len,
     set_bits(desc, 12, 10, 1, 1);                   /* DISABLE_FB */
     /* dword4(+16): tx_rate */
     set_bits(desc, 16, 0, 7, rate);                 /* TX_RATE */
-    /* dword8(+32): hwseq_en -> hardware assigns the sequence number */
-    set_bits(desc, 32, 15, 1, 1);                   /* HWSEQ_EN */
+    /* Sequence number: software-assigned, as rtw88/mac80211 do (header seq
+     * field, EN_HWSEQ = 0). With hardware sequencing the AP saw our
+     * retransmissions (Retry=1) carrying a stale/zero sequence number and
+     * dropped them as duplicates; software numbering keeps every frame
+     * unique and lets hardware retries keep the right number. Callers that
+     * pre-fill a non-zero seq field keep it. */
+    memcpy(pkt + RTL_TXDESC_SIZE, frame, len);
+    {
+        static uint16_t sw_seq = 0;
+        uint8_t *hdr = pkt + RTL_TXDESC_SIZE;
+        if (len >= 24 && hdr[22] == 0 && hdr[23] == 0) {
+            sw_seq = (uint16_t)((sw_seq + 1) & 0x0fff);
+            hdr[22] = (uint8_t)(sw_seq << 4);          /* fragment 0, seq low nibble */
+            hdr[23] = (uint8_t)(sw_seq >> 4);
+        }
+    }
+    set_bits(desc, 32, 15, 1, 0);                   /* HWSEQ_EN off */
 
     tx_checksum(desc);
-
-    memcpy(pkt + RTL_TXDESC_SIZE, frame, len);
 
     int total = RTL_TXDESC_SIZE + len;
     int sent = 0;

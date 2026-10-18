@@ -18,9 +18,12 @@
 
 static uint8_t w_sa[6];
 static uint8_t w_bssid[6];
+static int w_verbose = 0;
+static void hexdump(const char *tag, const uint8_t *d, int n) { printf("[wpa]   %s (%d):", tag, n); for (int i = 0; i < n; i++) printf("%s%02x", (i % 32) ? "" : "\n[wpa]     ", d[i]); printf("\n"); }
+static int w_m1_count = 0;
 
 typedef struct {
-    int got_m1, got_m3, got_auth, got_assoc, assoc_status, auth_status;
+    int got_m1, got_m3, got_auth, got_assoc, assoc_status, auth_status, aid;
     uint8_t anonce[32], replay_m1[8], replay_m3[8];
     uint8_t m3_kd[256]; int m3_kdlen;
 } hs_t;
@@ -43,9 +46,11 @@ static void cb(const uint8_t *f, uint32_t len, void *v) {
     hs_t *s = (hs_t *)v;
     if (len < 24) return;
     uint8_t fc0 = f[0];
+    if ((fc0 == 0xC0 || fc0 == 0xA0) && len >= 26 && !memcmp(f+10,w_bssid,6) && !memcmp(f+4,w_sa,6) && w_verbose)
+        printf("[wpa]   <- AP %s reason %u\n", fc0 == 0xC0 ? "deauth" : "disassoc", f[24] | (f[25] << 8));
     if ((fc0 == 0xB0 || fc0 == 0x10) && !memcmp(f+10,w_bssid,6) && !memcmp(f+4,w_sa,6)) {
         if (fc0 == 0xB0 && len >= 30) { s->got_auth=1; s->auth_status=f[28]|(f[29]<<8); }
-        if (fc0 == 0x10 && len >= 30) { s->got_assoc=1; s->assoc_status=f[26]|(f[27]<<8); }
+        if (fc0 == 0x10 && len >= 30) { s->got_assoc=1; s->assoc_status=f[26]|(f[27]<<8); s->aid=(f[28]|(f[29]<<8))&0x3fff; }
         return;
     }
     int is_data = ((fc0 & 0x0C) == 0x08); if (!is_data) return;
@@ -56,7 +61,10 @@ static void cb(const uint8_t *f, uint32_t len, void *v) {
     if (!(llc[0]==0xAA&&llc[1]==0xAA&&llc[2]==0x03&&llc[6]==0x88&&llc[7]==0x8E)) return;
     const uint8_t *e = llc + 8; if (e[1] != 0x03) return;
     uint16_t ki = (e[5]<<8)|e[6]; int mic=(ki&0x0100)!=0, ack=(ki&0x0080)!=0, sec=(ki&0x0200)!=0;
-    if (ack && !mic) { memcpy(s->anonce,e+17,32); memcpy(s->replay_m1,e+9,8); s->got_m1=1; }
+    if (w_verbose) printf("[wpa]   <- AP EAPOL-Key fc=0x%02x%02x len=%u key_info=0x%04x (%s) replay=%02x..%02x\n", f[1], f[0], len, ki,
+                          (ack && !mic) ? "msg1" : (ack && mic && sec) ? "msg3" : (!ack && mic && !sec) ? "msg2?" : "other", e[9], e[16]);
+    if (ack && !mic) { memcpy(s->anonce,e+17,32); memcpy(s->replay_m1,e+9,8); s->got_m1=1; w_m1_count++;
+        if (w_verbose && w_m1_count == 1) hexdump("msg1 frame", f, (int)len); }
     else if (ack && mic && sec) {
         memcpy(s->replay_m3,e+9,8);
         int kdl=(e[97]<<8)|e[98];
@@ -81,7 +89,8 @@ static int send_eapol(libusb_device_handle *h, uint16_t ki, const uint8_t rep[8]
     fr[p++]=(kdl>>8)&0xff; fr[p++]=kdl&0xff; if(kdl){memcpy(fr+p,kd,kdl);p+=kdl;}
     int el=p-(e0+4); fr[lp]=(el>>8)&0xff; fr[lp+1]=el&0xff;
     uint8_t dig[20]; CCHmac(kCCHmacAlgSHA1,kck,16,fr+e0,p-e0,dig); memcpy(fr+mp,dig,16);
-    return rtl_tx_inject(h,fr,p,RTL_RATE_6M,RTL_QSLT_VO,RTL_TX_EP_MGMT);
+    if (w_verbose) hexdump("msg2/4 frame as sent", fr, p);
+    return rtl_tx_inject(h,fr,p,RTL_RATE_6M,RTL_QSLT_VO,rtl_rx_bound_ops()->tx_ep_mgmt);
 }
 
 int rtl_wpa_connect(libusb_device_handle *h, int channel,
@@ -90,6 +99,7 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
     /* eigene MAC aus efuse waere schoener; hier fest wie im Rest des Projekts. */
     static const uint8_t sa[6] = { 0x00,0xc0,0xca,0xbc,0x4e,0xfa };
     memcpy(w_sa, sa, 6); memcpy(w_bssid, bssid, 6);
+    w_verbose = verbose; w_m1_count = 0;
     memcpy(k->sa, sa, 6); memcpy(k->bssid, bssid, 6); k->have_gtk = 0;
 
     int slen = (int)strlen(ssid); if (slen > 32) slen = 32;
@@ -189,7 +199,8 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
 
     uint8_t auth[30]={0xB0,0,0,0}; memcpy(auth+4,w_bssid,6);memcpy(auth+10,w_sa,6);memcpy(auth+16,w_bssid,6);
     auth[24]=0;auth[25]=0;auth[26]=1;auth[27]=0;auth[28]=0;auth[29]=0;
-    for(int i=0;i<8&&!s.got_auth;i++){rtl_tx_inject(h,auth,30,RTL_RATE_6M,RTL_QSLT_MGNT,RTL_TX_EP_MGMT);rtl_rx_poll(h,150,cb,&s);}
+    for(int i=0;i<8&&!s.got_auth;i++){int tr=rtl_tx_inject(h,auth,30,RTL_RATE_6M,RTL_QSLT_MGNT,rtl_rx_bound_ops()->tx_ep_mgmt);
+        if(tr&&verbose)printf("[wpa] auth TX error: %s\n",libusb_error_name(tr));rtl_rx_poll(h,150,cb,&s);}
     if(!s.got_auth||s.auth_status!=0){if(verbose)printf("[wpa] Auth fehlgeschlagen (%d)\n",s.auth_status);return -2;}
 
     uint8_t rsn[]={0x30,0x14,0x01,0,0,0x0f,0xac,0x04,0x01,0,0,0x0f,0xac,0x04,0x01,0,0,0x0f,0xac,0x02,0,0};
@@ -200,20 +211,26 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
     {uint8_t r[]={0x01,0x08,0x02,0x04,0x0b,0x16,0x0c,0x12,0x18,0x24};memcpy(as+p,r,10);p+=10;}
     {uint8_t er[]={0x32,0x04,0x30,0x48,0x60,0x6c};memcpy(as+p,er,6);p+=6;}
     memcpy(as+p,rsn,sizeof(rsn));p+=sizeof(rsn);
-    for(int i=0;i<8&&!s.got_assoc;i++){rtl_tx_inject(h,as,p,RTL_RATE_6M,RTL_QSLT_MGNT,RTL_TX_EP_MGMT);rtl_rx_poll(h,150,cb,&s);}
+    for(int i=0;i<8&&!s.got_assoc;i++){rtl_tx_inject(h,as,p,RTL_RATE_6M,RTL_QSLT_MGNT,rtl_rx_bound_ops()->tx_ep_mgmt);rtl_rx_poll(h,150,cb,&s);}
     if(!s.got_assoc||s.assoc_status!=0){if(verbose)printf("[wpa] Assoc fehlgeschlagen (%d)\n",s.assoc_status);return -3;}
+    k->aid = s.aid; if(verbose)printf("[wpa] associated, AID %d\n", s.aid);
 
     for(int i=0;i<20&&!s.got_m1;i++)rtl_rx_poll(h,150,cb,&s);
     if(!s.got_m1){if(verbose)printf("[wpa] keine msg1\n");return -4;}
 
     uint8_t snonce[32]; for(int i=0;i<32;i++)snonce[i]=(uint8_t)arc4random();
+    if (verbose) { hexdump("ANonce", s.anonce, 32); hexdump("SNonce", snonce, 32); hexdump("AA (bssid)", w_bssid, 6); hexdump("SPA (our sa)", w_sa, 6); printf("[wpa]   ssid='%s' (%d bytes), psk length %zu\n", ssid, slen, strlen(psk)); }
     uint8_t b[76]; int bo=0; amm(b,&bo,w_bssid,w_sa,6); amm(b,&bo,s.anonce,snonce,32);
     uint8_t ptk[48]; prf384(pmk,"Pairwise key expansion",b,bo,ptk);
     memcpy(k->kck,ptk,16); memcpy(k->kek,ptk+16,16); memcpy(k->tk,ptk+32,16);
 
     if(send_eapol(h,0x010A,s.replay_m1,snonce,rsn,sizeof(rsn),k->kck)!=0)return -5;
     for(int i=0;i<20&&!s.got_m3;i++)rtl_rx_poll(h,150,cb,&s);
-    if(!s.got_m3){if(verbose)printf("[wpa] keine msg3 (Passwort?)\n");return -6;}
+    if(!s.got_m3){
+        if(verbose) printf("[wpa] keine msg3 (msg1 seen %d times%s)\n", w_m1_count,
+            w_m1_count > 1 ? ": AP re-sent msg1, so it rejected our msg2 MIC (PTK/password/SSID mismatch)" : "");
+        return -6;
+    }
     send_eapol(h,0x030A,s.replay_m3,NULL,NULL,0,k->kck);
 
     /* GTK aus msg3 auspacken */
@@ -252,4 +269,16 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
     if(verbose)printf("[wpa] connected, TK set, GTK %s, station mode (auto-ACK on).\n",
                       k->have_gtk?"ok":"missing");
     return 0;
+}
+
+void rtl_wpa_leave(libusb_device_handle *h) {
+    static const uint8_t zero[6] = {0};
+    if (!memcmp(w_bssid, zero, 6)) return;            /* never connected */
+    uint8_t fr[26] = {0xC0, 0x00, 0x00, 0x00};
+    memcpy(fr + 4, w_bssid, 6); memcpy(fr + 10, w_sa, 6); memcpy(fr + 16, w_bssid, 6);
+    fr[22] = 0; fr[23] = 0; fr[24] = 3; fr[25] = 0;    /* reason 3: leaving */
+    for (int i = 0; i < 2; i++) {
+        rtl_tx_inject(h, fr, 26, RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt);
+        usleep(20000);
+    }
 }

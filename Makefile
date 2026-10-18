@@ -36,7 +36,7 @@ HAL := src/rtl_hal.c src/rtl_rx.c $(CORE)
 
 BINS := usbprobe chipinfo initchip efuseinfo fwload ledtest stagetest \
         monitor inject ledscan alfa-extcap scan associate connect \
-        ccmptest alfa-netd deauth txtest
+        ccmptest alfa-netd deauth txtest wpatest
 
 all: $(BINS)
 
@@ -96,6 +96,9 @@ deauth: src/deauth.c $(HAL) $(HDRS)
 	$(BUILD)
 
 txtest: src/txtest.c $(HAL) $(HDRS)
+	$(BUILD)
+
+wpatest: src/wpatest.c src/rtl_wpa.c src/rtl_ccmp.c $(HAL) $(HDRS)
 	$(BUILD)
 
 clean:

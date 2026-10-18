@@ -37,13 +37,14 @@
  *                                    table (FCC/MKK/ETSI by efuse country, else min)
  *   [ ] TX descriptor                verify 88xxA TX desc for the 1x1 part
  *   [ ] tools use ops->tx_ep_mgmt    associate/alfa_netd/inject still pass the
- *                                    8812AU macro RTL_TX_EP_MGMT (0x02) directly
+ *                                    8812AU macro RTL_TX_EP_MGMT (0x02) directly (fixed: rtl_rx_bound_ops())
  *
  * Unported steps return RTL_ENOSYS so rtl_hal stops with a clear message.
  */
 #include "rtl_chip.h"
 #include "rtl_usb.h"
 #include "rtl_tx.h"
+#include "rtl_rx.h"
 #include "rtl_mac.h"
 #include "rtl8821au.h"
 #include <stdio.h>
@@ -447,7 +448,9 @@ static int usb_speed_of(libusb_device_handle *h) {
 static int rtl8821au_mac_init(libusb_device_handle *h, int verbose) {
     int rc;
 
-    rtl_write8(h, REG_HMETFR, 0xf);
+    /* rtw88 clears REG_HMETFR right after the firmware download. rtl_hal has
+     * already sent H2C_SET_PWR_MODE by now, so the clear moved to the end of
+     * this function, followed by a second active-mode H2C. */
 
     /* rtw_load_table(chip->mac_tbl) */
     for (size_t i = 0; i < sizeof(rtw8821a_mac_tbl) / sizeof(rtw8821a_mac_tbl[0]); i++) {
@@ -575,6 +578,9 @@ static int rtl8821au_mac_init(libusb_device_handle *h, int verbose) {
     rtl_write32(h, REG_ARFRH3_V1, 0xffcff000);
 
     set8(h, REG_CR, MACTXEN | MACRXEN);
+
+    rtl_write8(h, REG_HMETFR, 0xf);
+    rtl_fw_set_active_mode(h, verbose);   /* firmware stays out of power-save (PM bit, RF off) */
 
     if (verbose) printf("  [mac] done, CR=0x%04x\n", rtl_read16(h, REG_CR, NULL));
     return 0;
