@@ -15,15 +15,16 @@
 typedef struct {
     libusb_device_handle *usb;
     const rtl_chip_ops   *ops;
+    uint16_t              vid;
     uint16_t              pid;
     int                   channel;   /* zuletzt erfolgreich gesetzter Kanal */
 } rtl_dev;
 
-/* Bindet die ops-Tabelle anhand der USB-PID. Danach ist dev nutzbar.
- * Unbekannte PID -> rtl_chip_default() (Verhalten wie bisher). */
-void rtl_dev_bind(rtl_dev *dev, libusb_device_handle *h, uint16_t pid);
+/* Bindet die ops-Tabelle anhand der USB-ID. Danach ist dev nutzbar.
+ * Unbekannte ID -> rtl_chip_default() (Verhalten wie bisher). */
+void rtl_dev_bind(rtl_dev *dev, libusb_device_handle *h, uint16_t vid, uint16_t pid);
 
-/* Wie rtl_dev_bind, holt die PID aber selbst aus dem USB-Descriptor. */
+/* Wie rtl_dev_bind, holt VID/PID aber selbst aus dem USB-Descriptor. */
 void rtl_dev_bind_auto(rtl_dev *dev, libusb_device_handle *h);
 
 /* Bring-up ueber die ops-Tabelle. with_cal=1 fuegt LCK+IQK hinzu.

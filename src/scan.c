@@ -53,12 +53,12 @@ int main(int argc, char **argv) {
 
     libusb_context *ctx = NULL;
     if (libusb_init(&ctx) != 0) return 1;
-    libusb_device_handle *h = NULL; uint16_t pid = 0; int claimed = 0;
-    int rc = rtl_open_first(ctx, &h, &pid, &claimed);
-    if (rc || !h) { printf("Kein RTL8812AU gefunden.\n"); libusb_exit(ctx); return 2; }
-    printf("Geraet 0bda:%04x. Inbetriebnahme ...\n", pid);
+    libusb_device_handle *h = NULL; uint16_t vid = 0, pid = 0; int claimed = 0;
+    int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
+    if (rc || !h) { printf("Kein bekannter Adapter gefunden.\n"); libusb_exit(ctx); return 2; }
+    printf("Geraet %04x:%04x. Inbetriebnahme ...\n", vid, pid);
 
-    rtl_rx_bind(ctx, rtl_chip_probe(pid));   /* asynchronen RX-Pfad aktivieren */
+    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
     if (rtl_hal_full_init(h, 1, 0, 0) != 0) { printf("Init fehlgeschlagen.\n"); goto done; }
 
     scan_ctx s; memset(&s, 0, sizeof(s));

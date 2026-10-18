@@ -51,10 +51,14 @@
 #define SYS_CFG_CHIP_VER_MASK   0x0000F000u
 #define SYS_CFG_CHIP_VER_SHIFT  12
 
-/* Finds and opens the first RTL8812AU (VID 0x0bda). Claims interface 0.
+/* Finds and opens the first adapter listed in rtl_ids.c (any vendor ID:
+ * Realtek, TP-Link, D-Link, ...). Claims interface 0.
  * Returns 0 and sets *out_handle; otherwise a libusb error code (<0)
  * or LIBUSB_ERROR_NO_DEVICE if none is plugged in. *claimed tells whether the
  * interface claim succeeded (reads can sometimes be attempted without it). */
+int rtl_open_first_ex(libusb_context *ctx, libusb_device_handle **out_handle,
+                      uint16_t *out_vid, uint16_t *out_pid, int *claimed);
+/* Compatibility wrapper without the vendor ID. */
 int rtl_open_first(libusb_context *ctx, libusb_device_handle **out_handle,
                    uint16_t *out_pid, int *claimed);
 
@@ -77,15 +81,40 @@ int rtl_write32(libusb_device_handle *h, uint16_t addr, uint32_t val);
 int rtl_efuse_read_byte(libusb_device_handle *h, uint16_t addr, uint8_t *out);
 int rtl_efuse_read_map(libusb_device_handle *h, uint8_t *map, int maplen);
 
-/* Power-on (card enable): runs the CARDEMU_TO_ACT sequence ported from the
- * Linux HAL. verbose!=0 prints each step.
- * Returns: 0 ok, <0 on USB error, >0 = number of the failed
+/* One step of a Realtek power sequence (8-bit register ops). */
+typedef struct {
+    uint16_t    offset;   /* register, or the delay amount for DELAY_* */
+    uint8_t     cmd;      /* RTL_PWR_* */
+    uint8_t     mask;
+    uint8_t     value;
+    const char *note;
+} rtl_pwr_step;
+
+enum {
+    RTL_PWR_WRITE    = 1,
+    RTL_PWR_POLLING  = 2,
+    RTL_PWR_DELAY_US = 3,
+    RTL_PWR_END      = 4,
+    RTL_PWR_DELAY_MS = 5,
+};
+
+/* Runs a power sequence table (terminated by RTL_PWR_END). verbose!=0 prints
+ * each step. Returns: 0 ok, <0 on USB error, >0 = number of the failed
  * POLLING step (chip state machine not reached). */
+int rtl_pwr_seq_run(libusb_device_handle *h, const rtl_pwr_step *seq, int verbose);
+
+/* Power-on (card enable) for the RTL8812AU: runs the CARDEMU_TO_ACT sequence
+ * ported from the Linux HAL. Same return convention as rtl_pwr_seq_run. */
 int rtl_power_on(libusb_device_handle *h, int verbose);
 
-/* Firmware download (NIC firmware, embedded). verbose!=0 prints progress.
+/* Firmware download of an arbitrary 8051 NIC image (with or without the
+ * 32-byte Realtek header; signatures 0x95xx (8812A) and 0x21xx (8821A) are
+ * recognised and stripped). verbose!=0 prints progress.
  * Returns: 0 ok, <0 USB error, 1 = checksum timeout, 2 = WINTINI timeout.
  * Requires a successful power-on sequence. */
+int rtl_fw_download_blob(libusb_device_handle *h, const uint8_t *buf, uint32_t len, int verbose);
+
+/* Firmware download of the embedded RTL8812AU NIC firmware. */
 int rtl_fw_download(libusb_device_handle *h, int verbose);
 
 /* Tell the embedded firmware to stay in PS_MODE_ACTIVE (no autonomous

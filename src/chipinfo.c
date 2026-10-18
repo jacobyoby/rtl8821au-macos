@@ -4,19 +4,21 @@
  *
  * This is the native macOS equivalent of the Linux "read_chip_version_8812a":
  * if the chip answers plausibly here, the USB register layer is working.
+ * Matches any adapter listed in rtl_ids.c (8812AU and 8821AU families).
  */
 #include <stdio.h>
 #include "rtl_usb.h"
+#include "rtl_ids.h"
 
 int main(void) {
     libusb_context *ctx = NULL;
     if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init fehlgeschlagen\n"); return 1; }
 
     libusb_device_handle *h = NULL;
-    uint16_t pid = 0; int claimed = 0;
-    int rc = rtl_open_first(ctx, &h, &pid, &claimed);
+    uint16_t vid = 0, pid = 0; int claimed = 0;
+    int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
     if (rc == LIBUSB_ERROR_NO_DEVICE) {
-        printf("Kein RTL8812AU (VID 0x0bda) gefunden. Adapter einstecken.\n");
+        printf("Kein bekannter Adapter (rtl_ids.c) gefunden. Adapter einstecken.\n");
         libusb_exit(ctx); return 2;
     }
     if (rc != 0 || !h) {
@@ -24,8 +26,10 @@ int main(void) {
         libusb_exit(ctx); return 1;
     }
 
-    printf("Geraet geoeffnet: 0bda:%04x   Interface-Claim: %s\n",
-           pid, claimed ? "OK" : "NICHT geclaimt (Reads werden trotzdem versucht)");
+    const rtl_usb_id *id = rtl_usb_id_lookup(vid, pid);
+    printf("Geraet geoeffnet: %04x:%04x (%s, %s)   Interface-Claim: %s\n",
+           vid, pid, id ? rtl_chip_id_name(id->chip) : "?", id ? id->note : "?",
+           claimed ? "OK" : "NICHT geclaimt (Reads werden trotzdem versucht)");
 
     /* --- Chip version from SYS_CFG --- */
     int r = 0;

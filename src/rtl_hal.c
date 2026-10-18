@@ -21,20 +21,23 @@
 /* Best-effort: darf fehlen und darf fehlschlagen. */
 #define TRY(fn, call) do { if (fn) { (call); } } while (0)
 
-void rtl_dev_bind(rtl_dev *dev, libusb_device_handle *h, uint16_t pid) {
+void rtl_dev_bind(rtl_dev *dev, libusb_device_handle *h, uint16_t vid, uint16_t pid) {
     dev->usb     = h;
+    dev->vid     = vid;
     dev->pid     = pid;
-    dev->ops     = rtl_chip_probe(pid);
+    dev->ops     = rtl_chip_probe(vid, pid);
     dev->channel = 0;
 }
 
 void rtl_dev_bind_auto(rtl_dev *dev, libusb_device_handle *h) {
-    uint16_t pid = 0;
+    uint16_t vid = 0, pid = 0;
     struct libusb_device_descriptor d;
     libusb_device *dv = libusb_get_device(h);
-    if (dv && libusb_get_device_descriptor(dv, &d) == 0)
+    if (dv && libusb_get_device_descriptor(dv, &d) == 0) {
+        vid = d.idVendor;
         pid = d.idProduct;
-    rtl_dev_bind(dev, h, pid);
+    }
+    rtl_dev_bind(dev, h, vid, pid);
 }
 
 int rtl_hal_init_dev(rtl_dev *dev, int channel, int with_cal, int verbose) {
@@ -43,7 +46,7 @@ int rtl_hal_init_dev(rtl_dev *dev, int channel, int with_cal, int verbose) {
     const rtl_chip_ops   *o = dev->ops;
     libusb_device_handle *h = dev->usb;
 
-    if (verbose) printf("[hal] Chip: %s (0bda:%04x)\n", o->name, dev->pid);
+    if (verbose) printf("[hal] Chip: %s (%04x:%04x)\n", o->name, dev->vid, dev->pid);
 
     STEP(o->power_on,    o->power_on(h, verbose),       "Power-On");
     STEP(o->fw_download, o->fw_download(h, verbose),    "Firmware-Download");

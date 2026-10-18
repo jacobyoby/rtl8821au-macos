@@ -1,4 +1,5 @@
 # alfa-driver — Build fuer macOS Apple Silicon (arm64), Userspace via libusb.
+# Chips: RTL8812AU (rtl_chip.c) und RTL8821AU (rtl8821au.c), USB-IDs in rtl_ids.c.
 
 CC      ?= clang
 
@@ -22,10 +23,11 @@ HDRS := $(wildcard src/*.h)
 BUILD = $(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
 # Gemeinsame Chip-Module (Bring-up bis Monitor, inkl. ops-Tabelle und TX).
-CORE := src/rtl_usb.c src/rtl_init.c src/rtl_fw.c src/fw_8812a_nic.c \
+CORE := src/rtl_usb.c src/rtl_ids.c src/rtl_init.c src/rtl_fw.c \
+        src/fw_8812a_nic.c src/fw_8821a_nic.c \
         src/rtl_efuse.c src/rtl_led.c src/rtl_mac.c src/rtl_bb.c \
         src/rtl_rf.c src/rtl_cal.c src/rtl_txpwr.c \
-        src/rtl_tx.c src/rtl_chip.c
+        src/rtl_tx.c src/rtl_chip.c src/rtl8821au.c
 
 # Bring-up + Empfangspfad (alles, was rtl_hal_full_init nutzt).
 HAL := src/rtl_hal.c src/rtl_rx.c $(CORE)
@@ -38,22 +40,22 @@ all: $(BINS)
 
 # --- Einzeltools ---
 
-usbprobe: src/usbprobe.c $(HDRS)
+usbprobe: src/usbprobe.c src/rtl_ids.c $(HDRS)
 	$(BUILD)
 
-chipinfo: src/chipinfo.c src/rtl_usb.c $(HDRS)
+chipinfo: src/chipinfo.c src/rtl_usb.c src/rtl_ids.c $(HDRS)
 	$(BUILD)
 
-initchip: src/initchip.c src/rtl_init.c src/rtl_usb.c $(HDRS)
+initchip: src/initchip.c $(CORE) $(HDRS)
 	$(BUILD)
 
-efuseinfo: src/efuseinfo.c src/rtl_efuse.c src/rtl_init.c src/rtl_usb.c $(HDRS)
+efuseinfo: src/efuseinfo.c src/rtl_efuse.c src/rtl_init.c src/rtl_usb.c src/rtl_ids.c $(HDRS)
 	$(BUILD)
 
-fwload: src/fwload.c src/rtl_fw.c src/fw_8812a_nic.c src/rtl_init.c src/rtl_usb.c $(HDRS)
+fwload: src/fwload.c $(CORE) $(HDRS)
 	$(BUILD)
 
-ledtest: src/ledtest.c src/rtl_led.c src/rtl_fw.c src/fw_8812a_nic.c src/rtl_init.c src/rtl_usb.c $(HDRS)
+ledtest: src/ledtest.c src/rtl_led.c src/rtl_fw.c src/fw_8812a_nic.c src/rtl_init.c src/rtl_usb.c src/rtl_ids.c $(HDRS)
 	$(BUILD)
 
 ccmptest: src/ccmptest.c src/rtl_ccmp.c $(HDRS)

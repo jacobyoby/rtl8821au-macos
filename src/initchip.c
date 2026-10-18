@@ -6,33 +6,42 @@
  * hardware state machine responds — the native macOS equivalent of the Linux
  * "card enable".
  *
+ * Chip-aware: the power-on sequence comes from the ops table bound to the
+ * USB ID (RTL8812AU or RTL8821AU).
+ *
  * Note: the REAL MAC only comes after the efuse read (next step);
  * right after power-on, 0x0610 may still show the default.
  */
 #include <stdio.h>
 #include "rtl_usb.h"
+#include "rtl_chip.h"
 
 int main(void) {
     libusb_context *ctx = NULL;
     if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init fehlgeschlagen\n"); return 1; }
 
     libusb_device_handle *h = NULL;
-    uint16_t pid = 0; int claimed = 0;
-    int rc = rtl_open_first(ctx, &h, &pid, &claimed);
-    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("Kein RTL8812AU gefunden. Adapter einstecken.\n"); libusb_exit(ctx); return 2; }
+    uint16_t vid = 0, pid = 0; int claimed = 0;
+    int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
+    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("Kein bekannter Adapter gefunden. Adapter einstecken.\n"); libusb_exit(ctx); return 2; }
     if (rc != 0 || !h) { fprintf(stderr, "Oeffnen fehlgeschlagen: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
-    printf("Geraet 0bda:%04x geoeffnet, Claim: %s\n\n", pid, claimed ? "OK" : "NICHT");
+
+    const rtl_chip_ops *o = rtl_chip_probe(vid, pid);
+    printf("Geraet %04x:%04x geoeffnet (%s), Claim: %s\n\n", vid, pid, o->name, claimed ? "OK" : "NICHT");
 
     int r = 0;
     uint32_t sys = rtl_read32(h, REG_SYS_CFG, &r);
     printf("vor Power-On:  SYS_CFG=0x%08x (rc=%d)\n", sys, r);
 
-    printf("\nPower-On-Sequenz (CARDEMU_TO_ACT):\n");
-    int pr = rtl_power_on(h, 1);
+    printf("\nPower-On-Sequenz (%s):\n", o->name);
+    int pr = o->power_on(h, 1);
 
     if (pr == 0)      printf("\n==> Power-On ERFOLGREICH. Chip ist aktiv.\n");
     else if (pr > 0)  printf("\n==> Power-On haengt bei POLLING-Schritt %d (State-Machine).\n", pr);
     else              printf("\n==> Power-On USB-Fehler: %s\n", libusb_error_name(pr));
+
+    sys = rtl_read32(h, REG_SYS_CFG, &r);
+    printf("nach Power-On: SYS_CFG=0x%08x (rc=%d)\n", sys, r);
 
     uint8_t mac[6] = {0};
     if (rtl_reg_read(h, REG_MACID, mac, 6) == 0)

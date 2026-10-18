@@ -160,3 +160,61 @@ This is a real reverse-engineering effort (reimplementing chip logic from the
 Linux source), not a weekend project. But every milestone is independently
 testable, and nothing about it is blocked on Apple Silicon — it is all userspace
 USB work.
+
+---
+
+## RTL8821AU port (TP-Link Archer T2U Plus and friends) — work in progress
+
+This fork adds a second chip to the ops table: the **RTL8821AU / RTL8811AU**
+(1x1 802.11ac, USB 2.0), as found in the TP-Link Archer T2U Plus (`2357:0120`),
+Archer T2U Nano, D-Link DWA-171, Netgear A6100, Edimax EW-7811UTC and others.
+The full USB ID list is in `src/rtl_ids.c` (taken from the Linux `rtw88`
+driver's `rtw8821au` table).
+
+Reference for the port is Linux `rtw88` (`rtw8821a.c`, `rtw8821a_table.c`,
+`rtw88xxa.c`), not the old aircrack-ng vendor driver.
+
+### What works today (verified on an Archer T2U Plus, Apple Silicon, macOS 27)
+
+| Step | Status |
+|---|---|
+| USB ID match, claim in userspace (`usbprobe`) | works |
+| Register access, chip version read (`chipinfo`) | works |
+| Hardware reset + power-on sequence (`initchip`) | works, both polling steps pass |
+| 8051 firmware upload, `rtw8821a_fw.bin` (`fwload`) | works, checksum OK, firmware ready |
+| MAC / BB / RF init, channel, monitor mode, calibration, TX power | **not ported yet** |
+
+Unported steps return `-38` (`ENOSYS`) with a `[8821au] <step>: not ported yet`
+message, so `stagetest 3` and above stop cleanly.
+
+### Layout of the port
+
+- `src/rtl_ids.[ch]` — VID:PID -> chip family. Small enough for the probe tools
+  to link without the chip core.
+- `src/rtl_chip.[ch]` — `rtl_chip_ops` now carries a chip id instead of a PID
+  list; `rtl_chip_probe(vid, pid)` picks the ops table.
+- `src/rtl8821au.c` — the 8821AU ops: hw reset, power sequences, CR enable,
+  firmware download; stubs for the rest, with a checklist at the top.
+- `src/fw_8821a_nic.c` — `rtw88/rtw8821a_fw.bin` from linux-firmware as a C
+  array (sha256 in the file header; Realtek redistributable firmware licence).
+- `src/rtl_init.c` — the power-sequence interpreter is now generic
+  (`rtl_pwr_seq_run`), `src/rtl_fw.c` can load any 8051 image
+  (`rtl_fw_download_blob`).
+- `rtl_open_first_ex()` matches any vendor ID in the table; every tool prints
+  the real `vid:pid`.
+
+### Endpoints on the 8821AU
+
+The USB 2.0 part has a different endpoint layout from the AWUS036ACH:
+bulk IN `0x84`, bulk OUT `0x05 0x06 0x08 0x09`, interrupt IN `0x87`.
+Per `rtw88` the four OUT pipes are high/beacon, BE/BK, VI/VO and management.
+`rtl8821au_ops` carries that; the tools still pass the 8812AU macro
+`RTL_TX_EP_MGMT` directly and need to switch to `ops->tx_ep_mgmt`.
+
+### Next steps
+
+1. MAC init: `rtw8821a_mac_tbl`, LLT, queue/page setup, TRX FIFO
+   (`rtw88xxa_power_on` tail, `rtw88xxau_init_queue_priority`).
+2. BB/AGC and RF path A tables from `rtw8821a_table.c`.
+3. Channel switch and monitor RCR, then `monitor` on 2.4 GHz.
+4. Calibration and efuse TX power, then `scan` / `connect` / `alfa-netd`.

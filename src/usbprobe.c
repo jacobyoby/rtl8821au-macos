@@ -1,9 +1,11 @@
 /*
- * usbprobe — Milestone 1 for native macOS RTL8812AU access.
+ * usbprobe — Milestone 1 for native macOS access.
  *
- * Finds the Alfa AWUS036ACH (Realtek VID 0x0bda) on USB, opens it, dumps
- * descriptor + endpoints (so we know the bulk-IN/OUT and control endpoints for
- * RX/TX/register access) and tries to claim the interface.
+ * Lists every USB device that is either a known adapter (rtl_ids.c: Realtek,
+ * TP-Link, D-Link, Edimax, ... by VID:PID) or carries the Realtek vendor ID,
+ * opens it, dumps descriptor + endpoints (so we know the bulk-IN/OUT and
+ * control endpoints for RX/TX/register access) and tries to claim the
+ * interface.
  *
  * Pure userspace, no kernel/kext/DriverKit dependency.
  *
@@ -14,19 +16,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <libusb.h>
+#include "rtl_ids.h"
 
 #define REALTEK_VID 0x0bda
-
-/* Known RTL8812AU PIDs (AWUS036ACH usually appears as 0x8812 or 0x881a). */
-static const uint16_t known_pids[] = {
-    0x8812, 0x881a, 0x881b, 0x881c, 0x8813, 0xa811, 0x0811, 0x0820, 0x0823,
-};
-
-static int is_known_pid(uint16_t pid) {
-    for (size_t i = 0; i < sizeof(known_pids) / sizeof(known_pids[0]); i++)
-        if (known_pids[i] == pid) return 1;
-    return 0;
-}
 
 static const char *xfer_type(uint8_t attr) {
     switch (attr & LIBUSB_TRANSFER_TYPE_MASK) {
@@ -35,6 +27,16 @@ static const char *xfer_type(uint8_t attr) {
         case LIBUSB_TRANSFER_TYPE_BULK:        return "bulk";
         case LIBUSB_TRANSFER_TYPE_INTERRUPT:   return "interrupt";
         default:                               return "unknown";
+    }
+}
+
+static const char *speed_name(int s) {
+    switch (s) {
+        case LIBUSB_SPEED_LOW:   return "low (1.5 Mbit/s)";
+        case LIBUSB_SPEED_FULL:  return "full (12 Mbit/s)";
+        case LIBUSB_SPEED_HIGH:  return "high (480 Mbit/s, USB 2.0)";
+        case LIBUSB_SPEED_SUPER: return "super (5 Gbit/s, USB 3.0)";
+        default:                 return "unknown";
     }
 }
 
@@ -94,14 +96,17 @@ int main(void) {
         libusb_device *dev = list[i];
         struct libusb_device_descriptor d;
         if (libusb_get_device_descriptor(dev, &d) != 0) continue;
-        if (d.idVendor != REALTEK_VID) continue;
+
+        const rtl_usb_id *id = rtl_usb_id_lookup(d.idVendor, d.idProduct);
+        if (!id && d.idVendor != REALTEK_VID) continue;
 
         found++;
-        int known = is_known_pid(d.idProduct);
-        printf("\n=== Realtek-Geraet %04x:%04x  (bus %d, addr %d)%s ===\n",
+        printf("\n=== Geraet %04x:%04x  (bus %d, addr %d)  ",
                d.idVendor, d.idProduct,
-               libusb_get_bus_number(dev), libusb_get_device_address(dev),
-               known ? "  [bekannte RTL8812AU-PID]" : "  [PID nicht in Liste]");
+               libusb_get_bus_number(dev), libusb_get_device_address(dev));
+        if (id) printf("[%s: %s] ===\n", rtl_chip_id_name(id->chip), id->note);
+        else    printf("[Realtek-VID, PID nicht in rtl_ids.c] ===\n");
+        printf("  Speed:         %s\n", speed_name(libusb_get_device_speed(dev)));
 
         libusb_device_handle *h = NULL;
         rc = libusb_open(dev, &h);
@@ -132,9 +137,9 @@ int main(void) {
     }
 
     if (!found) {
-        printf("Kein Realtek-Geraet (VID 0x0bda) am USB gefunden.\n");
+        printf("Kein bekannter Adapter (rtl_ids.c) und kein Realtek-Geraet (VID 0x0bda) am USB gefunden.\n");
         printf("Adapter einstecken und erneut ausfuehren. Gegenprobe:\n");
-        printf("  system_profiler SPUSBDataType | grep -i realtek\n");
+        printf("  ioreg -p IOUSB -w0 | grep -i wlan\n");
     }
 
     libusb_free_device_list(list, 1);

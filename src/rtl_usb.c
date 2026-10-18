@@ -1,19 +1,9 @@
 #include "rtl_usb.h"
+#include "rtl_ids.h"
 #include <string.h>
 
-/* Known RTL8812AU PIDs (AWUS036ACH usually 0x8812 or 0x881a). */
-static const uint16_t known_pids[] = {
-    0x8812, 0x881a, 0x881b, 0x881c, 0x8813, 0xa811, 0x0811, 0x0820, 0x0823,
-};
-
-static int is_known_pid(uint16_t pid) {
-    for (size_t i = 0; i < sizeof(known_pids) / sizeof(known_pids[0]); i++)
-        if (known_pids[i] == pid) return 1;
-    return 0;
-}
-
-int rtl_open_first(libusb_context *ctx, libusb_device_handle **out_handle,
-                   uint16_t *out_pid, int *claimed) {
+int rtl_open_first_ex(libusb_context *ctx, libusb_device_handle **out_handle,
+                      uint16_t *out_vid, uint16_t *out_pid, int *claimed) {
     libusb_device **list;
     ssize_t n = libusb_get_device_list(ctx, &list);
     if (n < 0) return (int)n;
@@ -25,8 +15,7 @@ int rtl_open_first(libusb_context *ctx, libusb_device_handle **out_handle,
     for (ssize_t i = 0; i < n; i++) {
         struct libusb_device_descriptor d;
         if (libusb_get_device_descriptor(list[i], &d) != 0) continue;
-        if (d.idVendor != RTL_REALTEK_VID) continue;
-        if (!is_known_pid(d.idProduct)) continue; /* only genuine 8812au PIDs */
+        if (!rtl_usb_id_lookup(d.idVendor, d.idProduct)) continue; /* only known adapters */
 
         libusb_device_handle *h = NULL;
         rc = libusb_open(list[i], &h);
@@ -38,6 +27,7 @@ int rtl_open_first(libusb_context *ctx, libusb_device_handle **out_handle,
         int cl = libusb_claim_interface(h, 0);
         if (claimed) *claimed = (cl == 0);
 
+        if (out_vid) *out_vid = d.idVendor;
         if (out_pid) *out_pid = d.idProduct;
         *out_handle = h;
         rc = 0;
@@ -46,6 +36,11 @@ int rtl_open_first(libusb_context *ctx, libusb_device_handle **out_handle,
 
     libusb_free_device_list(list, 1);
     return rc;
+}
+
+int rtl_open_first(libusb_context *ctx, libusb_device_handle **out_handle,
+                   uint16_t *out_pid, int *claimed) {
+    return rtl_open_first_ex(ctx, out_handle, NULL, out_pid, claimed);
 }
 
 int rtl_reg_read(libusb_device_handle *h, uint16_t addr, uint8_t *buf, uint16_t len) {

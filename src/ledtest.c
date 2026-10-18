@@ -16,11 +16,11 @@ int main(int argc, char **argv) {
     if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init fehlgeschlagen\n"); return 1; }
 
     libusb_device_handle *h = NULL;
-    uint16_t pid = 0; int claimed = 0;
-    int rc = rtl_open_first(ctx, &h, &pid, &claimed);
-    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("Kein RTL8812AU gefunden. Adapter einstecken.\n"); libusb_exit(ctx); return 2; }
+    uint16_t vid = 0, pid = 0; int claimed = 0;
+    int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
+    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("Kein bekannter Adapter gefunden. Adapter einstecken.\n"); libusb_exit(ctx); return 2; }
     if (rc != 0 || !h) { fprintf(stderr, "Oeffnen fehlgeschlagen: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
-    printf("Geraet 0bda:%04x, Claim: %s\n", pid, claimed ? "OK" : "NICHT");
+    printf("Geraet %04x:%04x, Claim: %s\n", vid, pid, claimed ? "OK" : "NICHT");
 
     printf("Power-On: %s\n", rtl_power_on(h, 0) == 0 ? "OK" : "FEHLER");
     printf("Firmware: %s\n", rtl_fw_download(h, 0) == 0 ? "OK (WINTINI_RDY)" : "FEHLER");

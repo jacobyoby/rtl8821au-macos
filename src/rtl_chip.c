@@ -20,11 +20,11 @@ static uint32_t le32(const uint8_t *p) {
 }
 
 /*
- * RX-Deskriptor 8812A (include/rtl8812a_recv.h):
+ * RX-Deskriptor 88xxA (include/rtl8812a_recv.h; rtw88 rx.h fuer 8821A gleich):
  *   dword0 [13:0] pkt_len, [19:16] drvinfo_size (x8), [25:24] shift
  *   dword2 [28]   rpt_sel (C2H/Report statt 802.11-Frame)
  */
-static int rtl8812a_rx_parse_desc(const uint8_t *p, int avail, rtl_rx_sub *out) {
+int rtl88xxa_rx_parse_desc(const uint8_t *p, int avail, rtl_rx_sub *out) {
     if (avail <= 24) return -1;
 
     uint32_t d0 = le32(p);
@@ -59,13 +59,9 @@ static void rtl8812a_dbg_dump(libusb_device_handle *h) {
            cr, rcr, ch18, rc);
 }
 
-static const uint16_t rtl8812au_pids[] = {
-    0x8812, 0x881a, 0x881b, 0x881c, 0x8813, 0x0000
-};
-
 const rtl_chip_ops rtl8812au_ops = {
     .name           = "RTL8812AU",
-    .pids           = rtl8812au_pids,
+    .chip           = RTL_CHIP_8812AU,
 
     .power_on       = rtl_power_on,
     .fw_download    = rtl_fw_download,
@@ -88,16 +84,24 @@ const rtl_chip_ops rtl8812au_ops = {
     .rxdesc_size    = 24,
     .txdesc_size    = RTL_TXDESC_SIZE,
 
-    .rx_parse_desc  = rtl8812a_rx_parse_desc,
+    .rx_parse_desc  = rtl88xxa_rx_parse_desc,
     .tx_inject      = rtl_tx_inject,
 };
 
 const rtl_chip_ops *rtl_chip_default(void) { return &rtl8812au_ops; }
 
-const rtl_chip_ops *rtl_chip_probe(uint16_t pid) {
-    static const rtl_chip_ops *const table[] = { &rtl8812au_ops, NULL };
+const rtl_chip_ops *rtl_chip_for(uint8_t chip) {
+    static const rtl_chip_ops *const table[] = { &rtl8812au_ops, &rtl8821au_ops, NULL };
     for (int i = 0; table[i]; i++)
-        for (const uint16_t *p = table[i]->pids; *p; p++)
-            if (*p == pid) return table[i];
+        if (table[i]->chip == chip) return table[i];
+    return NULL;
+}
+
+const rtl_chip_ops *rtl_chip_probe(uint16_t vid, uint16_t pid) {
+    const rtl_usb_id *id = rtl_usb_id_lookup(vid, pid);
+    if (id) {
+        const rtl_chip_ops *o = rtl_chip_for(id->chip);
+        if (o) return o;
+    }
     return rtl_chip_default();
 }

@@ -3,14 +3,16 @@
  *
  * Buendelt alle chip-spezifischen Einsprungpunkte hinter einer Tabelle, damit
  * rtl_hal / rtl_rx / rtl_tx keinen 8812AU-spezifischen Code mehr enthalten.
- * Ein weiterer Chip (8811AU/8821AU) braucht dann nur eine zweite Instanz
- * von rtl_chip_ops plus seine eigenen Tabellenmodule.
+ * Jeder Chip ist eine Instanz von rtl_chip_ops (rtl_chip.c fuer den 8812AU,
+ * rtl8821au.c fuer den 8821AU). Die USB-ID -> Chip Zuordnung steht in
+ * rtl_ids.c, damit kleine Tools sie ohne den ganzen Core linken koennen.
  */
 #ifndef RTL_CHIP_H
 #define RTL_CHIP_H
 
 #include <stdint.h>
 #include <libusb.h>
+#include "rtl_ids.h"
 
 /* Ergebnis des Zerlegens EINES aggregierten USB-RX-Subframes. */
 typedef struct {
@@ -22,7 +24,7 @@ typedef struct {
 
 typedef struct rtl_chip_ops {
     const char     *name;
-    const uint16_t *pids;        /* 0-terminierte USB-PID-Liste */
+    uint8_t         chip;        /* enum rtl_chip_id (rtl_ids.h) */
 
     /* --- Bring-up (Reihenfolge legt rtl_hal fest, nicht der Chip) --- */
     int  (*power_on)      (libusb_device_handle *h, int verbose);
@@ -54,10 +56,16 @@ typedef struct rtl_chip_ops {
                      uint8_t rate, uint8_t qsel, uint8_t ep);
 } rtl_chip_ops;
 
-/* PID -> ops. Unbekannte PID liefert rtl_chip_default() (Verhalten wie bisher). */
-const rtl_chip_ops *rtl_chip_probe(uint16_t pid);
+/* (VID, PID) -> ops. Unbekannte ID liefert rtl_chip_default() (Verhalten wie bisher). */
+const rtl_chip_ops *rtl_chip_probe(uint16_t vid, uint16_t pid);
+/* enum rtl_chip_id -> ops, NULL wenn unbekannt. */
+const rtl_chip_ops *rtl_chip_for(uint8_t chip);
 const rtl_chip_ops *rtl_chip_default(void);
 
+/* Gemeinsamer 88xxA-RX-Deskriptor (8812A und 8821A teilen das Format). */
+int rtl88xxa_rx_parse_desc(const uint8_t *p, int avail, rtl_rx_sub *out);
+
 extern const rtl_chip_ops rtl8812au_ops;
+extern const rtl_chip_ops rtl8821au_ops;
 
 #endif /* RTL_CHIP_H */

@@ -39,13 +39,13 @@ int main(int argc, char **argv) {
     libusb_context *ctx = NULL;
     if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init fehlgeschlagen\n"); return 1; }
     libusb_device_handle *h = NULL;
-    uint16_t pid = 0; int claimed = 0;
-    int rc = rtl_open_first(ctx, &h, &pid, &claimed);
-    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("Kein RTL8812AU gefunden.\n"); libusb_exit(ctx); return 2; }
+    uint16_t vid = 0, pid = 0; int claimed = 0;
+    int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
+    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("Kein bekannter Adapter gefunden.\n"); libusb_exit(ctx); return 2; }
     if (rc != 0 || !h) { fprintf(stderr, "Oeffnen: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
-    printf("Geraet 0bda:%04x, Claim: %s\n\n", pid, claimed ? "OK" : "NEIN");
+    printf("Geraet %04x:%04x, Claim: %s\n\n", vid, pid, claimed ? "OK" : "NEIN");
 
-    rtl_rx_bind(ctx, rtl_chip_probe(pid));   /* asynchronen RX-Pfad aktivieren */
+    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
 
     rc = rtl_hal_full_init(h, channel, with_cal, 1);
     if (rc != 0) { printf("Init fehlgeschlagen (rc=%d).\n", rc); goto done; }

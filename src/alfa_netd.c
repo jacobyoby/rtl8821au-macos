@@ -551,10 +551,10 @@ int main(int argc, char **argv) {
     char *pw = getpass("WLAN-Passwort: "); if (!pw||!*pw) return 1;
 
     libusb_context *ctx=NULL; if (libusb_init(&ctx)) return 1;
-    libusb_device_handle *h=NULL; uint16_t pid=0; int claimed=0;
-    if (rtl_open_first(ctx,&h,&pid,&claimed)||!h){printf("Kein Geraet.\n");return 2;}
+    libusb_device_handle *h=NULL; uint16_t vid=0, pid=0; int claimed=0;
+    if (rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed)||!h){printf("Kein Geraet.\n");return 2;}
 
-    rtl_rx_bind(ctx, rtl_chip_probe(pid));   /* asynchronen RX-Pfad aktivieren */
+    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
 
     int rc = 2;
     if (scan_for_ssid(h, ssid, &channel, bssid) != 0) {

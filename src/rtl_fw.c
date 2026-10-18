@@ -101,9 +101,8 @@ static int poll_flag32(libusb_device_handle *h, uint32_t mask, int tries) {
     return -1;
 }
 
-int rtl_fw_download(libusb_device_handle *h, int verbose) {
-    const uint8_t *buf = array_mp_8812a_fw_nic;
-    uint32_t len = array_mp_8812a_fw_nic_len;
+int rtl_fw_download_blob(libusb_device_handle *h, const uint8_t *buf, uint32_t len, int verbose) {
+    if (!buf || len < 32) return LIBUSB_ERROR_INVALID_PARAM;
 
     uint16_t sig = (uint16_t)(buf[0] | (buf[1] << 8));
     uint16_t ver = (uint16_t)(buf[4] | (buf[5] << 8));
@@ -143,6 +142,10 @@ int rtl_fw_download(libusb_device_handle *h, int verbose) {
     if (rc) { if (verbose) printf("  WINTINI_RDY TIMEOUT\n"); return 2; }
     if (verbose) printf("  FW ready (WINTINI_RDY gesetzt)\n");
     return 0;
+}
+
+int rtl_fw_download(libusb_device_handle *h, int verbose) {
+    return rtl_fw_download_blob(h, array_mp_8812a_fw_nic, array_mp_8812a_fw_nic_len, verbose);
 }
 
 /* ---------------------------------------------------------------------
