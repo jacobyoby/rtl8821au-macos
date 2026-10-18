@@ -545,12 +545,16 @@ static int scan_for_ssid(libusb_device_handle *h, const char *ssid, int *out_cha
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2) { printf("Nutzung: sudo %s <ssid> [--default]\n", argv[0]); return 1; }
+    if (argc < 2) { printf("Nutzung: sudo %s <ssid> [--default] [--psk-stdin]\n", argv[0]); return 1; }
     if (geteuid() != 0) { printf("Braucht root: sudo %s ...\n", argv[0]); return 1; }
     const char *ssid = argv[1];
     int channel = 0;
     uint8_t bssid[6];
-    int want_default = (argc > 2 && strcmp(argv[2], "--default") == 0);
+    int want_default = 0, psk_stdin = 0;
+    for (int a = 2; a < argc; a++) {
+        if (!strcmp(argv[a], "--default")) want_default = 1;
+        else if (!strcmp(argv[a], "--psk-stdin")) psk_stdin = 1;
+    }
 
     /* Find the Apple Wi-Fi device (e.g. en0). */
     { FILE *pp = popen("networksetup -listallhardwareports 2>/dev/null | awk '/Wi-Fi|AirPort/{getline; print $2}'", "r");
@@ -584,7 +588,16 @@ int main(int argc, char **argv) {
     { FILE *pp = popen("route -n get default 2>/dev/null | awk '/gateway/{print $2}'", "r");
       if (pp) { if (fgets(g_orig_gw, sizeof(g_orig_gw), pp)) g_orig_gw[strcspn(g_orig_gw,"\n")]=0; pclose(pp); } }
 
-    char *pw = getpass("WLAN-Passwort: "); if (!pw||!*pw) return 1;
+    /* --psk-stdin: read the passphrase from stdin (one line), e.g. piped from
+     * the macOS Keychain by run-netd.sh, so it never sits in a file or argv. */
+    static char pwbuf[128];
+    char *pw = NULL;
+    if (psk_stdin) {
+        if (fgets(pwbuf, sizeof(pwbuf), stdin)) { pwbuf[strcspn(pwbuf, "\r\n")] = 0; pw = pwbuf; }
+    } else {
+        pw = getpass("WLAN-Passwort: ");
+    }
+    if (!pw||!*pw) { printf("Kein Passwort.\n"); return 1; }
 
     libusb_context *ctx=NULL; if (libusb_init(&ctx)) return 1;
     libusb_device_handle *h=NULL; uint16_t vid=0, pid=0; int claimed=0;

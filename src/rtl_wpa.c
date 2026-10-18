@@ -21,6 +21,7 @@ static uint8_t w_bssid[6];
 static int w_verbose = 0;
 static void hexdump(const char *tag, const uint8_t *d, int n) { printf("[wpa]   %s (%d):", tag, n); for (int i = 0; i < n; i++) printf("%s%02x", (i % 32) ? "" : "\n[wpa]     ", d[i]); printf("\n"); }
 static int w_m1_count = 0;
+static int w_m3_count = 0;
 
 typedef struct {
     int got_m1, got_m3, got_auth, got_assoc, assoc_status, auth_status, aid;
@@ -69,7 +70,7 @@ static void cb(const uint8_t *f, uint32_t len, void *v) {
         memcpy(s->replay_m3,e+9,8);
         int kdl=(e[97]<<8)|e[98];
         if (kdl>0 && kdl<=256 && (e+99+kdl)<=(f+len)) { memcpy(s->m3_kd,e+99,kdl); s->m3_kdlen=kdl; }
-        s->got_m3=1;
+        s->got_m3=1; w_m3_count++;
     }
 }
 
@@ -99,7 +100,7 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
     /* eigene MAC aus efuse waere schoener; hier fest wie im Rest des Projekts. */
     static const uint8_t sa[6] = { 0x00,0xc0,0xca,0xbc,0x4e,0xfa };
     memcpy(w_sa, sa, 6); memcpy(w_bssid, bssid, 6);
-    w_verbose = verbose; w_m1_count = 0;
+    w_verbose = verbose; w_m1_count = 0; w_m3_count = 0;
     memcpy(k->sa, sa, 6); memcpy(k->bssid, bssid, 6); k->have_gtk = 0;
 
     int slen = (int)strlen(ssid); if (slen > 32) slen = 32;
@@ -231,7 +232,23 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
             w_m1_count > 1 ? ": AP re-sent msg1, so it rejected our msg2 MIC (PTK/password/SSID mismatch)" : "");
         return -6;
     }
+    /* msg4: the AP re-sends msg3 when it misses our ACK or our msg4 (seen
+     * live: a retried msg3 copy, then deauth reason 15 = 4-way handshake
+     * timeout). Send msg4 twice, then for ~600 ms answer every further msg3
+     * copy with a fresh msg4 carrying that copy's replay counter. */
     send_eapol(h,0x030A,s.replay_m3,NULL,NULL,0,k->kck);
+    send_eapol(h,0x030A,s.replay_m3,NULL,NULL,0,k->kck);
+    {
+        int answered = w_m3_count;
+        for (int i = 0; i < 6; i++) {
+            rtl_rx_poll(h, 100, cb, &s);
+            if (w_m3_count != answered) {
+                answered = w_m3_count;
+                send_eapol(h,0x030A,s.replay_m3,NULL,NULL,0,k->kck);
+                if (verbose) printf("[wpa] msg3 copy %d -> msg4 re-sent\n", answered);
+            }
+        }
+    }
 
     /* GTK aus msg3 auspacken */
     if(s.m3_kdlen>=24 && (s.m3_kdlen%8)==0){
