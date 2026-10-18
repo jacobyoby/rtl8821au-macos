@@ -147,6 +147,36 @@ static int cmp_signal(const void *a, const void *b) {
     return y->peak_dbm - x->peak_dbm;
 }
 
+/*
+ * How likely two BSSIDs belong to the same router; -1 = unrelated, lower =
+ * closer. Routers derive their per-SSID / per-band BSSIDs from one base MAC:
+ * they vary the last byte (extra SSIDs), byte 3 (2.4 vs 5 GHz radio) or set
+ * the locally-administered bits in byte 0. Bytes 1, 2 and 4 stay the same.
+ */
+static int sibling_score(const uint8_t *a, const uint8_t *b) {
+    if (a[1] != b[1] || a[2] != b[2] || a[4] != b[4]) return -1;
+    int d3 = abs(a[3] - b[3]), d5 = abs(a[5] - b[5]);
+    if (d3 >= 16 || d5 >= 16) return -1;
+    return (a[0] != b[0]) * 4096 + d3 * 256 + d5;
+}
+
+/* Closest named BSSID on the same router as nets[i], or -1. SSIDs that show
+ * up on many BSSIDs (ISP hotspots like "xfinitywifi") say little about whose
+ * router it is, so the owner's own SSID wins over them. */
+static int named_sibling(const scan_ctx *s, int i) {
+    int best = -1, best_score = 0;
+    for (int j = 0; j < s->count; j++) {
+        if (j == i || !s->nets[j].ssid[0]) continue;
+        int sc = sibling_score(s->nets[i].bssid, s->nets[j].bssid);
+        if (sc < 0) continue;
+        int uses = 0;
+        for (int k = 0; k < s->count; k++) uses += !strcmp(s->nets[k].ssid, s->nets[j].ssid);
+        if (uses > 3) sc += 8192;
+        if (best < 0 || sc < best_score) { best = j; best_score = sc; }
+    }
+    return best;
+}
+
 static void fmt_dbm(char *buf, size_t sz, int dbm, int adj) {
     if (dbm == RTL_RSSI_NONE) snprintf(buf, sz, "?");
     else                      snprintf(buf, sz, adj ? ">%d" : "%d", dbm);
@@ -158,7 +188,9 @@ static void usage(const char *argv0) {
            "  list the networks, strongest first. Default dwell is 500 ms per\n"
            "  channel. Signal is the median dBm, Peak the strongest sample.\n"
            "  Hidden SSIDs are filled in passively when a client probes for or\n"
-           "  joins the network during the scan; a longer dwell catches more.\n",
+           "  joins the network during the scan; a longer dwell catches more.\n"
+           "  Otherwise 'Same router as' names the visible network whose BSSID\n"
+           "  shows it comes from the same router.\n",
            argv0);
 }
 
@@ -200,10 +232,10 @@ int main(int argc, char **argv) {
     }
 
     qsort(s.nets, (size_t)s.count, sizeof(net_t), cmp_signal);
-    printf("\n\n%-32s %-17s %5s %6s %5s  %s\n",
-           "SSID", "BSSID", "Chan", "Signal", "Peak", "Security");
-    printf("--------------------------------------------------------------------------------\n");
-    int any_adj = 0, n_hidden = 0, n_revealed = 0;
+    printf("\n\n%-32s %-17s %5s %6s %5s  %-16s %s\n",
+           "SSID", "BSSID", "Chan", "Signal", "Peak", "Security", "Same router as");
+    printf("------------------------------------------------------------------------------------------------------------\n");
+    int any_adj = 0, n_hidden = 0, n_revealed = 0, n_sibling = 0;
     for (int i = 0; i < s.count; i++) {
         net_t *n = &s.nets[i];
         char sig[8], peak[8], name[33]; int adj;
@@ -216,10 +248,14 @@ int main(int argc, char **argv) {
         else                     snprintf(name, sizeof(name), "<hidden>");
         n_hidden   += n->hidden;
         n_revealed += n->hidden && n->ssid[0];
-        printf("%-32s %02x:%02x:%02x:%02x:%02x:%02x %5d %6s %5s  %s%s\n",
+        char sec[17];
+        snprintf(sec, sizeof(sec), "%s%s", n->privacy ? "WPA/WEP" : "open",
+                 (n->hidden && n->ssid[0]) ? ", hidden" : "");
+        int sib = n->ssid[0] ? -1 : named_sibling(&s, i);
+        n_sibling += sib >= 0;
+        printf("%-32s %02x:%02x:%02x:%02x:%02x:%02x %5d %6s %5s  %-16s %s\n",
                name, n->bssid[0],n->bssid[1],n->bssid[2],n->bssid[3],n->bssid[4],n->bssid[5],
-               n->channel, sig, peak, n->privacy ? "WPA/WEP" : "open",
-               (n->hidden && n->ssid[0]) ? ", hidden" : "");
+               n->channel, sig, peak, sec, sib >= 0 ? s.nets[sib].ssid : "");
     }
     printf("\n%d networks found (Signal/Peak in dBm; %ld frames with CRC error dropped).\n",
            s.count, s.crc_dropped);
@@ -227,6 +263,10 @@ int main(int argc, char **argv) {
         printf("%d hidden networks, %d named from probe responses or association requests\n"
                "(\", hidden\"); the rest had no client asking for them by name during the scan.\n",
                n_hidden, n_revealed);
+    if (n_sibling)
+        printf("Same router as: %d unnamed hidden networks share a base MAC address with a\n"
+               "named one, i.e. they are extra SSIDs of that router (guessed from the BSSID).\n",
+               n_sibling);
     if (any_adj)
         printf(">dBm: only heard from a neighbouring channel, real level is higher.\n");
 
