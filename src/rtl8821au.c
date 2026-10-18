@@ -36,8 +36,7 @@
  *                                    HT1S/VHT1S rows, capped by the rtw88 limit
  *                                    table (FCC/MKK/ETSI by efuse country, else min)
  *   [ ] TX descriptor                verify 88xxA TX desc for the 1x1 part
- *   [ ] tools use ops->tx_ep_mgmt    associate/alfa_netd/inject still pass the
- *                                    8812AU macro RTL_TX_EP_MGMT (0x02) directly (fixed: rtl_rx_bound_ops())
+ *   [x] tools use ops->tx_ep_mgmt    via rtl_rx_bound_ops()->tx_ep_mgmt (0x09 here)
  *
  * Unported steps return RTL_ENOSYS so rtl_hal stops with a clear message.
  */

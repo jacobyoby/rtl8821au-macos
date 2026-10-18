@@ -24,9 +24,8 @@ associate
 connect
 ccmptest
 
-# Nur README.md im Repo, andere .md lokal aber nicht committen
-*.md
-!README.md
+# macOS
+.DS_Store
 alfa-netd
 deauth
 

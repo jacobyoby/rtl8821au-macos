@@ -1,0 +1,41 @@
+name: Adapter report
+description: Report how a USB Wi-Fi adapter works, or ask for one to be supported
+labels: [hardware]
+body:
+  - type: input
+    id: adapter
+    attributes:
+      label: Adapter
+      description: Make, model and hardware version if printed on the label
+    validations:
+      required: true
+  - type: input
+    id: usbid
+    attributes:
+      label: USB ID
+      description: VID:PID from `./usbprobe` or `ioreg -p IOUSB -l -w0`, for example 2357:0120
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS version
+    validations:
+      required: true
+  - type: checkboxes
+    id: works
+    attributes:
+      label: What works
+      description: Run the steps in CONTRIBUTING.md and tick what passed
+      options:
+        - label: usbprobe finds and claims the adapter
+        - label: stagetest 7 completes
+        - label: monitor captures frames
+        - label: inject gets probe responses
+        - label: associate succeeds
+        - label: run-netd.sh gets a DHCP lease and pings work
+  - type: textarea
+    id: output
+    attributes:
+      label: Output of the first step that failed
+      render: text

@@ -101,7 +101,18 @@ txtest: src/txtest.c $(HAL) $(HDRS)
 wpatest: src/wpatest.c src/rtl_wpa.c src/rtl_ccmp.c $(HAL) $(HDRS)
 	$(BUILD)
 
+# Self-tests that need no adapter (AES-CCM vectors, PBKDF2 vectors).
+check: ccmptest connect
+	./ccmptest
+	./connect --selftest
+
+help:
+	@echo "make          build all tools (arm64, libusb)"
+	@echo "make check    run the hardware-free self-tests"
+	@echo "make clean    remove the built tools"
+	@echo "See README.md for the tools and docs/ for details."
+
 clean:
 	rm -f $(BINS)
 
-.PHONY: all clean
+.PHONY: all check help clean

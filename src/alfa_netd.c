@@ -589,7 +589,7 @@ int main(int argc, char **argv) {
       if (pp) { if (fgets(g_orig_gw, sizeof(g_orig_gw), pp)) g_orig_gw[strcspn(g_orig_gw,"\n")]=0; pclose(pp); } }
 
     /* --psk-stdin: read the passphrase from stdin (one line), e.g. piped from
-     * the macOS Keychain by run-netd.sh, so it never sits in a file or argv. */
+     * the macOS Keychain by scripts/run-netd.sh, so it never sits in a file or argv. */
     static char pwbuf[128];
     char *pw = NULL;
     if (psk_stdin) {
