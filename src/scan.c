@@ -9,7 +9,7 @@
  * garbled SSIDs and impossible BSSIDs. Signal is the median of the samples
  * taken on the AP's own channel, Peak the strongest one.
  *
- * Usage: ./scan [ms_per_channel]   (default 500 ms)
+ * Usage: ./scan [-a] [ms_per_channel]   (default 500 ms; -a = every BSSID)
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -182,11 +182,127 @@ static void fmt_dbm(char *buf, size_t sz, int dbm, int adj) {
     else                      snprintf(buf, sz, adj ? ">%d" : "%d", dbm);
 }
 
+/* -a: every BSSID on its own row. */
+static void print_all(const scan_ctx *s) {
+    printf("\n%-32s %-17s %5s %6s %5s  %-16s %s\n",
+           "SSID", "BSSID", "Chan", "Signal", "Peak", "Security", "Same router as");
+    printf("------------------------------------------------------------------------------------------------------------\n");
+    int any_adj = 0, n_hidden = 0, n_revealed = 0, n_sibling = 0;
+    for (int i = 0; i < s->count; i++) {
+        const net_t *n = &s->nets[i];
+        char sig[8], peak[8], name[33]; int adj;
+        int dbm = signal_dbm(n, &adj);
+        fmt_dbm(sig, sizeof(sig), dbm, adj);
+        fmt_dbm(peak, sizeof(peak), adj ? dbm : n->peak_dbm, adj);
+        any_adj |= adj;
+        if (n->ssid[0])          snprintf(name, sizeof(name), "%s", n->ssid);
+        else if (n->hidden_len)  snprintf(name, sizeof(name), "<hidden, %d chars>", n->hidden_len);
+        else                     snprintf(name, sizeof(name), "<hidden>");
+        n_hidden   += n->hidden;
+        n_revealed += n->hidden && n->ssid[0];
+        char sec[17];
+        snprintf(sec, sizeof(sec), "%s%s", n->privacy ? "WPA/WEP" : "open",
+                 (n->hidden && n->ssid[0]) ? ", hidden" : "");
+        int sib = n->ssid[0] ? -1 : named_sibling(s, i);
+        n_sibling += sib >= 0;
+        printf("%-32s %02x:%02x:%02x:%02x:%02x:%02x %5d %6s %5s  %-16s %s\n",
+               name, n->bssid[0],n->bssid[1],n->bssid[2],n->bssid[3],n->bssid[4],n->bssid[5],
+               n->channel, sig, peak, sec, sib >= 0 ? s->nets[sib].ssid : "");
+    }
+    printf("\n%d networks found (Signal/Peak in dBm; %ld frames with CRC error dropped).\n",
+           s->count, s->crc_dropped);
+    if (n_hidden)
+        printf("%d hidden networks, %d named from probe responses or association requests\n"
+               "(\", hidden\"); the rest had no client asking for them by name during the scan.\n",
+               n_hidden, n_revealed);
+    if (n_sibling)
+        printf("Same router as: %d unnamed hidden networks share a base MAC address with a\n"
+               "named one, i.e. they are extra SSIDs of that router (guessed from the BSSID).\n",
+               n_sibling);
+    if (any_adj)
+        printf(">dBm: only heard from a neighbouring channel, real level is higher.\n");
+}
+
+static void net_name(const net_t *n, char name[33]) {
+    if (n->ssid[0])          snprintf(name, 33, "%s", n->ssid);
+    else if (n->hidden_len)  snprintf(name, 33, "<hidden, %d chars>", n->hidden_len);
+    else                     snprintf(name, 33, "<hidden>");
+}
+
+/*
+ * Default view: one row per network name, strongest first (s->nets is
+ * already sorted by signal, so the first BSSID of a name is its strongest).
+ * Unnamed hidden BSSIDs fold into the named network on the same router as
+ * "+N hidden"; the remaining unnamed ones are grouped per router.
+ */
+static void print_grouped(const scan_ctx *s) {
+    static int rep[MAX_NETS], sib[MAX_NETS], aps[MAX_NETS], hid[MAX_NETS], revealed[MAX_NETS];
+    for (int i = 0; i < s->count; i++) {
+        sib[i] = s->nets[i].ssid[0] ? -1 : named_sibling(s, i);
+        rep[i] = i; aps[i] = hid[i] = revealed[i] = 0;
+    }
+    for (int i = 0; i < s->count; i++) {
+        const net_t *n = &s->nets[i];
+        if (sib[i] >= 0) { rep[i] = -1; continue; }        /* folded below */
+        for (int j = 0; j < i; j++) {
+            if (rep[j] != j) continue;
+            const net_t *m = &s->nets[j];
+            if (n->ssid[0] ? !strcmp(m->ssid, n->ssid)
+                           : (!m->ssid[0] && sibling_score(m->bssid, n->bssid) >= 0)) {
+                rep[i] = j; break;
+            }
+        }
+    }
+    int rows = 0, folded = 0, any_adj = 0;
+    for (int i = 0; i < s->count; i++) {
+        if (rep[i] < 0) { hid[rep[sib[i]]]++; folded++; continue; }
+        aps[rep[i]]++;
+        revealed[rep[i]] |= s->nets[i].hidden && s->nets[i].ssid[0];
+    }
+
+    printf("\n%-32s %6s  %-12s %3s  %-16s %s\n",
+           "SSID", "Signal", "Channels", "APs", "Security", "Same router");
+    printf("----------------------------------------------------------------------------------------\n");
+    for (int i = 0; i < s->count; i++) {
+        if (rep[i] != i) continue;
+        const net_t *n = &s->nets[i];
+        char name[33], sig[8], chs[13] = "", sec[17], extra[24] = "";
+        int adj, dbm = signal_dbm(n, &adj);
+        net_name(n, name);
+        fmt_dbm(sig, sizeof(sig), dbm, adj);
+        any_adj |= adj;
+
+        uint8_t seen[256] = {0};
+        for (int k = 0; k < s->count; k++)
+            if (rep[k] == i) seen[s->nets[k].channel & 0xff] = 1;
+        for (int c = 1, len = 0; c < 256; c++) {
+            if (!seen[c]) continue;
+            int w = snprintf(chs + len, sizeof(chs) - (size_t)len, "%s%d", len ? "," : "", c);
+            if (len + w >= (int)sizeof(chs)) { memcpy(chs + sizeof(chs) - 3, "..", 3); break; }
+            len += w;
+        }
+        snprintf(sec, sizeof(sec), "%s%s", n->privacy ? "WPA/WEP" : "open",
+                 revealed[i] ? ", hidden" : "");
+        if (hid[i]) snprintf(extra, sizeof(extra), "+%d hidden", hid[i]);
+        printf("%-32s %6s  %-12s %3d  %-16s %s\n", name, sig, chs, aps[i], sec, extra);
+        rows++;
+    }
+    printf("\n%d networks from %d BSSIDs (Signal: strongest AP, median dBm; %ld frames\n"
+           "with CRC error dropped). ./scan -a lists every BSSID.\n",
+           rows, s->count, s->crc_dropped);
+    if (folded)
+        printf("+N hidden: %d hidden SSIDs whose BSSID shows they belong to that router.\n", folded);
+    if (any_adj)
+        printf(">dBm: only heard from a neighbouring channel, real level is higher.\n");
+}
+
 static void usage(const char *argv0) {
-    printf("Usage: %s [ms_per_channel]\n"
+    printf("Usage: %s [-a] [ms_per_channel]\n"
            "  Scan 2.4- and 5-GHz channels for beacons and probe responses and\n"
-           "  list the networks, strongest first. Default dwell is 500 ms per\n"
-           "  channel. Signal is the median dBm, Peak the strongest sample.\n"
+           "  list the networks, strongest first: one row per network name, with\n"
+           "  hidden SSIDs of the same router folded in. -a lists every BSSID\n"
+           "  instead. Default dwell is 500 ms per channel. Signal is the median\n"
+           "  dBm, Peak (-a) the strongest sample.\n"
            "  Hidden SSIDs are filled in passively when a client probes for or\n"
            "  joins the network during the scan; a longer dwell catches more.\n"
            "  Otherwise 'Same router as' names the visible network whose BSSID\n"
@@ -195,14 +311,14 @@ static void usage(const char *argv0) {
 }
 
 int main(int argc, char **argv) {
-    int dwell = 500;
-    if (argc > 2) { usage(argv[0]); return 2; }
-    if (argc == 2) {
-        if (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help")) { usage(argv[0]); return 0; }
+    int dwell = 500, all = 0, have_dwell = 0;
+    for (int a = 1; a < argc; a++) {
+        if (!strcmp(argv[a], "-h") || !strcmp(argv[a], "--help")) { usage(argv[0]); return 0; }
+        if (!strcmp(argv[a], "-a") || !strcmp(argv[a], "--all")) { all = 1; continue; }
         char *end = NULL;
-        long ms = strtol(argv[1], &end, 10);
-        if (!end || *end || ms <= 0 || ms > 60000) { usage(argv[0]); return 2; }
-        dwell = (int)ms;
+        long ms = strtol(argv[a], &end, 10);
+        if (have_dwell || !end || *end || ms <= 0 || ms > 60000) { usage(argv[0]); return 2; }
+        dwell = (int)ms; have_dwell = 1;
     }
     static const int chans[] = {1,2,3,4,5,6,7,8,9,10,11,12,13,
         36,40,44,48,52,56,60,64,100,104,108,112,116,132,136,140,149,153,157,161,165};
@@ -232,43 +348,7 @@ int main(int argc, char **argv) {
     }
 
     qsort(s.nets, (size_t)s.count, sizeof(net_t), cmp_signal);
-    printf("\n\n%-32s %-17s %5s %6s %5s  %-16s %s\n",
-           "SSID", "BSSID", "Chan", "Signal", "Peak", "Security", "Same router as");
-    printf("------------------------------------------------------------------------------------------------------------\n");
-    int any_adj = 0, n_hidden = 0, n_revealed = 0, n_sibling = 0;
-    for (int i = 0; i < s.count; i++) {
-        net_t *n = &s.nets[i];
-        char sig[8], peak[8], name[33]; int adj;
-        int dbm = signal_dbm(n, &adj);
-        fmt_dbm(sig, sizeof(sig), dbm, adj);
-        fmt_dbm(peak, sizeof(peak), adj ? dbm : n->peak_dbm, adj);
-        any_adj |= adj;
-        if (n->ssid[0])          snprintf(name, sizeof(name), "%s", n->ssid);
-        else if (n->hidden_len)  snprintf(name, sizeof(name), "<hidden, %d chars>", n->hidden_len);
-        else                     snprintf(name, sizeof(name), "<hidden>");
-        n_hidden   += n->hidden;
-        n_revealed += n->hidden && n->ssid[0];
-        char sec[17];
-        snprintf(sec, sizeof(sec), "%s%s", n->privacy ? "WPA/WEP" : "open",
-                 (n->hidden && n->ssid[0]) ? ", hidden" : "");
-        int sib = n->ssid[0] ? -1 : named_sibling(&s, i);
-        n_sibling += sib >= 0;
-        printf("%-32s %02x:%02x:%02x:%02x:%02x:%02x %5d %6s %5s  %-16s %s\n",
-               name, n->bssid[0],n->bssid[1],n->bssid[2],n->bssid[3],n->bssid[4],n->bssid[5],
-               n->channel, sig, peak, sec, sib >= 0 ? s.nets[sib].ssid : "");
-    }
-    printf("\n%d networks found (Signal/Peak in dBm; %ld frames with CRC error dropped).\n",
-           s.count, s.crc_dropped);
-    if (n_hidden)
-        printf("%d hidden networks, %d named from probe responses or association requests\n"
-               "(\", hidden\"); the rest had no client asking for them by name during the scan.\n",
-               n_hidden, n_revealed);
-    if (n_sibling)
-        printf("Same router as: %d unnamed hidden networks share a base MAC address with a\n"
-               "named one, i.e. they are extra SSIDs of that router (guessed from the BSSID).\n",
-               n_sibling);
-    if (any_adj)
-        printf(">dBm: only heard from a neighbouring channel, real level is higher.\n");
+    if (all) print_all(&s); else print_grouped(&s);
 
 done:
     rtl_rx_unbind();
