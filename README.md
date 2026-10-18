@@ -192,13 +192,24 @@ Reference for the port is Linux `rtw88` (`rtw8821a.c`, `rtw8821a_table.c`,
 | Efuse TX power, 2.4 GHz path A, capped by the rtw88 limit table (`rtl8821au_txpwr.c`) | works: efuse CCK 42 / OFDM 48 capped to CCK 28 / OFDM 32 (worldwide rows; FCC/MKK/ETSI chosen by efuse country code "US"/"JP"/"EU") |
 | **Injection** (`inject 6 30 1`, `txtest 6`) | **works**: 30 probe requests -> 94 FCS-clean probe responses to our SA; `txtest` with the efuse MAC: 10 requests -> 14 clean responses, TX queues drain |
 | Scan (`scan`) | works on 2.4 GHz (hundreds of networks); 5 GHz found nothing, band switch untested |
-| `connect` / `alfa-netd` (WPA2 station, internet) | not tried yet |
+| Open auth + association (`associate`) | works, 5/5 with the clean leave; use `associate <ch> <bssid> <ssid> 0 12 <ep> <qsel>` for a null-data ACK test |
+| WPA2-PSK 4-way handshake (`alfa-netd`, `wpatest`) | works on a WPA2/WPA3-transition AP (CCMP, PSK+SAE, MFPC); msg2 MIC verified against an independent computation |
+| DHCP over the encrypted link, utun up, gateway ARP | works: lease, gateway MAC resolved |
+| Ping through the utun | partial: 12 of 30 answered at 2-28 ms, then the gateway re-ARPed for us and stopped getting our replies. The ARP reply now goes out from the main loop instead of the RX callback; built, not retested |
 
-Every ops entry is now implemented for 2.4 GHz / 20 MHz / path A. The
-diagnostics tool `txtest [channel] [ep_hex] [qsel_hex] [count] [cal]` sends
-probe requests from the efuse MAC on a chosen endpoint/queue, dumps the TX
-queue registers and counts the responses; it is the quickest way to check a
-TX path change.
+Every ops entry is now implemented for 2.4 GHz / 20 MHz / path A.
+Diagnostics: `txtest [channel] [ep_hex] [qsel_hex] [count] [cal]` sends
+probe requests from the efuse MAC on a chosen endpoint/queue and counts the
+responses; `associate <ch> <bssid> <ssid> [cal] [flags] [ep] [qsel]` bisects
+auth/assoc (flags: 1 station RCR, 2 MSR+BSSID, 4 clean leave, 8 null-data
+ACK test); `WPA_TEST_PSK=dummy ./wpatest <ch> <bssid> <ssid>` runs the real
+handshake code with a throwaway passphrase and dumps the frames so the MIC
+can be checked offline.
+
+Lessons from the first AP (eero-style, WPA2/WPA3 transition, PMF capable):
+leave with a deauth or the next connect is refused; never send plaintext
+data after the keys are up; use software sequence numbers; do not transmit
+from inside the libusb RX callback.
 
 ### Layout of the port
 
@@ -242,11 +253,21 @@ Per `rtw88` the four OUT pipes are high/beacon, VO/VI, BE/BK and management
 
 ### Next steps
 
-1. `connect` and `alfa-netd` (WPA2 station + internet over utun), which
-   should mostly work now that TX, RX and the MAC register are in place.
-2. A dynamic DIG (false-alarm driven IGI, `rtw_phy_dig`) and a look at why
-   the RX IQK results scatter on this unit; both affect the FCS-clean rate.
-3. 5 GHz: `switch_band(5G)` is ported but untested; 5 GHz TX power and the
+1. Retest `sudo ./alfa-netd "<ssid>"` and watch the `[arp]`/`[stat]` lines:
+   if `icmp_in` keeps up with `icmp_out` past the gateway's ARP refresh
+   (`arp_req_answered` rising), the data path is done; then try
+   `--default` for full internet routing.
+2. If ARP replies still fail: compare an ARP reply against an echo request
+   in `send_ip_frame` (same path), check `acks` in `[stat]` (RCR_ACF is on
+   during the bridge; if it stays 0 the chip filters control frames via
+   RXFLTMAP1), and consider sending the reply twice.
+3. The AP retries frames to us often (the `[retry]` flag in `associate`
+   output), i.e. our hardware ACK is late or missing for the first copy.
+   Likely RX timing/AGC: the RX IQK result scatters on this unit and the
+   FCS-clean rate is 47%. A dynamic DIG (`rtw_phy_dig`) is the next lever.
+4. 5 GHz: `switch_band(5G)` is ported but untested; 5 GHz TX power and the
    5 GHz limit rows are not.
-4. Power-by-rate offsets (`rtw8821a_bb_pg`) and power training, for HT/VHT
+5. Power-by-rate offsets (`rtw8821a_bb_pg`) and power training, for HT/VHT
    rates beyond the legacy ones used so far.
+6. Strip the handshake hex dumps from `rtl_wpa.c` verbose output once the
+   data path is stable (they print nonces and frames, never the PSK).
