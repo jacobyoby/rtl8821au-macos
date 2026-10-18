@@ -182,10 +182,12 @@ Reference for the port is Linux `rtw88` (`rtw8821a.c`, `rtw8821a_table.c`,
 | Register access, chip version read (`chipinfo`) | works |
 | Hardware reset + power-on sequence (`initchip`) | works, both polling steps pass |
 | 8051 firmware upload, `rtw8821a_fw.bin` (`fwload`) | works, checksum OK, firmware ready |
-| MAC / BB / RF init, channel, monitor mode, calibration, TX power | **not ported yet** |
+| LLT table, MAC init: register table, queue pages, priorities, WMAC, EDCA, beacon, USB burst, ARFB (`stagetest 3`) | works, `CR=0x06ff`, `TXDMA_PQ_MAP=0xc5a0` |
+| Monitor RCR (`rtl_mac_set_monitor`, shared with 8812AU) | ported, not yet reachable (needs BB/RF first) |
+| BB / RF init, channel, calibration, TX power | **not ported yet** |
 
 Unported steps return `-38` (`ENOSYS`) with a `[8821au] <step>: not ported yet`
-message, so `stagetest 3` and above stop cleanly.
+message, so `stagetest 4` and above stop cleanly.
 
 ### Layout of the port
 
@@ -194,7 +196,9 @@ message, so `stagetest 3` and above stop cleanly.
 - `src/rtl_chip.[ch]` — `rtl_chip_ops` now carries a chip id instead of a PID
   list; `rtl_chip_probe(vid, pid)` picks the ops table.
 - `src/rtl8821au.c` — the 8821AU ops: hw reset, power sequences, CR enable,
-  firmware download; stubs for the rest, with a checklist at the top.
+  LLT, firmware download, MAC init (MAC table generated from rtw88's
+  `rtw8821a_table.c`); stubs for BB/RF/channel/cal/txpwr, with a checklist
+  at the top.
 - `src/fw_8821a_nic.c` — `rtw88/rtw8821a_fw.bin` from linux-firmware as a C
   array (sha256 in the file header; Realtek redistributable firmware licence).
 - `src/rtl_init.c` — the power-sequence interpreter is now generic
@@ -207,14 +211,16 @@ message, so `stagetest 3` and above stop cleanly.
 
 The USB 2.0 part has a different endpoint layout from the AWUS036ACH:
 bulk IN `0x84`, bulk OUT `0x05 0x06 0x08 0x09`, interrupt IN `0x87`.
-Per `rtw88` the four OUT pipes are high/beacon, BE/BK, VI/VO and management.
+Per `rtw88` the four OUT pipes are high/beacon, VO/VI, BE/BK and management
+(`REG_TXDMA_PQ_MAP = 0xc5a0`).
 `rtl8821au_ops` carries that; the tools still pass the 8812AU macro
 `RTL_TX_EP_MGMT` directly and need to switch to `ops->tx_ep_mgmt`.
 
 ### Next steps
 
-1. MAC init: `rtw8821a_mac_tbl`, LLT, queue/page setup, TRX FIFO
-   (`rtw88xxa_power_on` tail, `rtw88xxau_init_queue_priority`).
-2. BB/AGC and RF path A tables from `rtw8821a_table.c`.
-3. Channel switch and monitor RCR, then `monitor` on 2.4 GHz.
-4. Calibration and efuse TX power, then `scan` / `connect` / `alfa-netd`.
+1. BB/AGC and RF path A tables from `rtw8821a_table.c`
+   (`rtw88xxa_phy_bb_config`, `rtw88xxa_phy_rf_config`).
+2. Band/channel switch (`rtw88xxa_switch_band`, `rtw88xxa_set_channel`) and
+   the post-RF MAC bits (HWSEQ, BAR mode, NAV, TX report), then `monitor`
+   on 2.4 GHz.
+3. Calibration and efuse TX power, then `scan` / `connect` / `alfa-netd`.
