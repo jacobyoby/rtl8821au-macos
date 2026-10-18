@@ -1,14 +1,14 @@
 /*
- * alfa-netd — IE5: Internet-Client-Daemon.
+ * alfa-netd — IE5: Internet client daemon.
  *
- * Verbindet (WPA2), legt ein utun-Interface an, holt per DHCP eine IP und
- * brueckt IP-Pakete zwischen macOS (utun) und dem WLAN (802.11-Data + CCMP).
+ * Connects (WPA2), creates a utun interface, obtains an IP via DHCP and
+ * bridges IP packets between macOS (utun) and the WLAN (802.11 data + CCMP).
  *
- * Nutzung: sudo ./alfa-netd <kanal> <bssid> <ssid>
- * Passwort per getpass. Braucht root (utun + Routing). Aendert die Netzwerk-
- * Routen des Macs, solange es laeuft (Default-Route ueber das utun).
+ * Usage: sudo ./alfa-netd <channel> <bssid> <ssid>
+ * Password via getpass. Needs root (utun + routing). Changes the Mac's network
+ * routes while it runs (default route via the utun).
  *
- * ERSTE FASSUNG — wird an echtem Netz iterativ feinjustiert.
+ * FIRST VERSION — being fine-tuned iteratively on a real network.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,10 +45,10 @@ static uint64_t tx_pn = 1;
 static int g_utun_fd = -1;
 static uint8_t g_our_ip[4], g_gw_ip[4], g_mask[4], g_gw_mac[6];
 static int g_have_gw_mac = 0;
-/* DHCP-Erfassung waehrend des Setups. */
+/* DHCP capture during setup. */
 static int g_dhcp_mode = 0;
 static uint8_t g_dtype = 0, g_yi[4], g_dmask[4], g_dgw[4], g_dsrv[4], g_ddns[4];
-/* Diagnose-Zaehler. */
+/* Diagnostic counters. */
 static long c_utun_out = 0, c_tx = 0, c_rx_ip = 0, c_rx_other = 0, c_rx_dec = 0;
 static long c_icmp_out = 0, c_icmp_in = 0, c_uni_seen = 0, c_uni_decfail = 0;
 static long c_dhcp_seen = 0;   /* UDP frames to dst port 68 (any DHCP reply) */
@@ -63,21 +63,21 @@ static int  g_tim_set = 0;         /* beacon TIM bit for our AID (see on_frame) 
 static long c_keepalive = 0;
 static long c_beacon_seen = 0;     /* Beacons from our BSSID -- proves RX hardware is alive even if unicast stalls */
 static long c_arp_req_answered = 0; /* ARP-who-has requests for our own IP that we answered */
-/* Routing-Sicherung, damit wir das Netz nie kaputt zuruecklassen. */
+/* Routing backup, so we never leave the network broken. */
 static char g_orig_gw[64] = "";
 static int  g_changed_default = 0;
-static int  g_dns_set = 0;         /* haben wir per scutil einen DNS-Resolver gesetzt? */
+static int  g_dns_set = 0;         /* did we set a DNS resolver via scutil? */
 static char g_ifn[32] = "";
 static char g_wifi_dev[16] = "";   /* Apple Wi-Fi device (e.g. en0) */
 static int  g_wifi_off = 0;         /* we turned Apple Wi-Fi off */
 static volatile sig_atomic_t g_stop = 0;
 
-/* DNS fuer die Bridge setzen/entfernen (macOS loest utun-Interfaces nicht
- * automatisch als DNS-Quelle auf -- ohne das funktioniert nur IP-basierter
- * Verkehr, jede Namensaufloesung (auch von Apps im Hintergrund) schlaegt
- * fehl, obwohl die eigentliche Bridge laeuft. Gleicher Mechanismus wie bei
- * wg-quick auf macOS: ein State:/Network/Service/<ifn>/DNS-Eintrag im
- * SCDynamicStore, den mDNSResponder als zusaetzlichen Resolver aufnimmt. */
+/* Set/remove DNS for the bridge (macOS does not automatically use utun
+ * interfaces as a DNS source -- without this only IP-based traffic works,
+ * and every name lookup (including from background apps) fails even though
+ * the bridge itself is running. Same mechanism as wg-quick on macOS: a
+ * State:/Network/Service/<ifn>/DNS entry in the SCDynamicStore, which
+ * mDNSResponder picks up as an additional resolver. */
 static void set_dns(const char *ifn, const uint8_t dns[4]) {
     FILE *p = popen("scutil", "w");
     if (!p) return;
@@ -133,14 +133,14 @@ static int utun_open(char *ifname, size_t ilen) {
     if (ioctl(fd, CTLIOCGINFO, &ci) < 0) { close(fd); return -1; }
     struct sockaddr_ctl sc; memset(&sc, 0, sizeof(sc));
     sc.sc_len = sizeof(sc); sc.sc_family = AF_SYSTEM; sc.ss_sysaddr = AF_SYS_CONTROL;
-    sc.sc_id = ci.ctl_id; sc.sc_unit = 0;   /* 0 = naechste freie utunN */
+    sc.sc_id = ci.ctl_id; sc.sc_unit = 0;   /* 0 = next free utunN */
     if (connect(fd, (struct sockaddr *)&sc, sizeof(sc)) < 0) { close(fd); return -1; }
     socklen_t l = ilen;
     getsockopt(fd, SYSPROTO_CONTROL, UTUN_OPT_IFNAME, ifname, &l);
     return fd;
 }
 
-/* ---- 802.11-Data-Frame mit CCMP senden (toDS, DA=dst_mac, Ethertype) ---- */
+/* ---- Send an 802.11 data frame with CCMP (toDS, DA=dst_mac, Ethertype) ---- */
 static int send_ip_frame(libusb_device_handle *h, const uint8_t dst_mac[6],
                    uint16_t ethertype, const uint8_t *payload, int plen) {
     uint8_t body[1600]; int p = 0;
@@ -155,7 +155,7 @@ static int send_ip_frame(libusb_device_handle *h, const uint8_t dst_mac[6],
 
     uint8_t frame[1700]; int flen = 0;
     rtl_ccmp_encrypt_frame(K.tk, hdr, 24, body, p, tx_pn++, frame, &flen);
-    /* QSLT_VO auf EP 0x02 (High-Queue) — derselbe zuverlaessige Pfad wie EAPOL. */
+    /* QSLT_VO on EP 0x02 (high queue) — the same reliable path as EAPOL. */
     /* QSLT_BE: this is what worked in the very first successful test (clean
      * DHCP OFFER+ACK). Every run since switching this to QSLT_VO has failed
      * to get a DHCP reply at all, even though our RX/decrypt path is proven
@@ -205,7 +205,7 @@ static int send_group_key_ack(libusb_device_handle *h, const uint8_t rep[8]) {
     return rtl_tx_inject(h, frame, flen, RTL_RATE_6M, RTL_QSLT_VO, rtl_rx_bound_ops()->tx_ep_mgmt);
 }
 
-/* ---- IPv4/UDP-Pruefsumme ---- */
+/* ---- IPv4/UDP checksum ---- */
 static uint16_t csum16(const uint8_t *d, int n, uint32_t init) {
     uint32_t s = init;
     for (int i = 0; i + 1 < n; i += 2) s += (d[i] << 8) | d[i+1];
@@ -230,10 +230,10 @@ static uint16_t udp_csum(const uint8_t *src4, const uint8_t *dst4, const uint8_t
     return cs ? cs : 0xffff;   /* computed 0 must be sent as all-ones (RFC 768) */
 }
 
-/* ---- DHCP: DISCOVER/REQUEST bauen, OFFER/ACK parsen ---- */
+/* ---- DHCP: build DISCOVER/REQUEST, parse OFFER/ACK ---- */
 static int dhcp_build(uint8_t *out, uint8_t msgtype, const uint8_t *xid,
                       const uint8_t *req_ip, const uint8_t *server_ip) {
-    /* BOOTP + DHCP-Optionen */
+    /* BOOTP + DHCP options */
     uint8_t bp[600]; memset(bp, 0, sizeof(bp)); int p = 0;
     bp[0]=1; bp[1]=1; bp[2]=6; bp[3]=0; p=4;      /* op,htype,hlen,hops */
     memcpy(bp+4, xid, 4); p=8;                     /* xid */
@@ -291,13 +291,13 @@ static int is_dhcp_reply(const uint8_t *ip, int len, uint8_t *out_type,
         else if (t==1&&l>=4) memcpy(mask,v,4);
         else if (t==3&&l>=4) memcpy(gw,v,4);
         else if (t==54&&l>=4) memcpy(server,v,4);
-        else if (t==6&&l>=4) memcpy(dns,v,4);     /* Domain Name Server, erste Adresse */
+        else if (t==6&&l>=4) memcpy(dns,v,4);     /* Domain Name Server, first address */
         i += 2 + l;
     }
     return *out_type != 0;
 }
 
-/* ---- ARP: Request bauen, Reply parsen ---- */
+/* ---- ARP: build request, parse reply ---- */
 static void arp_request(libusb_device_handle *h, const uint8_t *target_ip) {
     uint8_t a[28]; int p=0;
     a[p++]=0;a[p++]=1; a[p++]=0x08;a[p++]=0x00; a[p++]=6;a[p++]=4; a[p++]=0;a[p++]=1; /* eth/ip, req */
@@ -354,16 +354,16 @@ static void on_frame(const uint8_t *f, uint32_t len, void *v) {
      * this we never notice when the AP drops us mid-session -- we just keep
      * transmitting into a dead association and RX goes silent with no
      * explanation. Confirmed happening live: the FRITZ!Box's own event log
-     * showed "WLAN-Geraet wurde abgemeldet" (passive -- the AP deauthed us,
-     * not a self-initiated disconnect) for this adapter's MAC. addr2 (TA) is
-     * the BSSID for AP-originated management frames, same offset as the
-     * fromDS BSSID check below. */
+     * showed "WLAN-Geraet wurde abgemeldet" ("WLAN device was logged off";
+     * passive -- the AP deauthed us, not a self-initiated disconnect) for
+     * this adapter's MAC. addr2 (TA) is the BSSID for AP-originated
+     * management frames, same offset as the fromDS BSSID check below. */
     if (fc0 == 0xD4 && len >= 10 && memcmp(f + 4, K.sa, 6) == 0) { c_ack_to_us++; return; }   /* ACK to us */
     if ((fc0 & 0xFC) == 0xC0 || (fc0 & 0xFC) == 0xA0) {   /* Deauth / Disassoc */
         if (len >= 26 && memcmp(f+10, K.bssid, 6) == 0) {
             uint16_t reason = f[24] | (f[25] << 8);
-            fprintf(stderr, "[link] AP hat uns %s (reason=%u) -- Verbindung vom AP beendet, nicht von uns.\n",
-                    (fc0 & 0xFC) == 0xC0 ? "deauthentifiziert" : "disassoziiert", reason);
+            fprintf(stderr, "[link] AP %s us (reason=%u) -- the AP ended the connection, not us.\n",
+                    (fc0 & 0xFC) == 0xC0 ? "deauthenticated" : "disassociated", reason);
         }
         return;
     }
@@ -437,12 +437,12 @@ static void on_frame(const uint8_t *f, uint32_t len, void *v) {
     const uint8_t *pl = out+8; int pll = ol-8;
 
     if (et == ETH_ARP && pll >= 28) {
-        /* ARP-Reply auf unsere Anfrage? (op=2, sender-ip==gw) */
+        /* ARP reply to our request? (op=2, sender-ip==gw) */
         if (pl[6]==0 && pl[7]==2) {
             c_arp_reply_any++;   /* diagnostic: any ARP reply at all reached us */
             if (!memcmp(pl+14, g_gw_ip, 4)) { memcpy(g_gw_mac, pl+8, 6); g_have_gw_mac=1; }
         } else if (pl[6]==0 && pl[7]==1 && frame_h) {
-            /* ARP-Request (who-has) an unsere eigene IP -- siehe arp_reply(). */
+            /* ARP request (who-has) for our own IP -- see arp_reply(). */
             int have_ip = g_our_ip[0]|g_our_ip[1]|g_our_ip[2]|g_our_ip[3];
             if (have_ip && !memcmp(pl+24, g_our_ip, 4)) {
                 /* Do not transmit from inside the RX callback (libusb: no
@@ -459,7 +459,7 @@ static void on_frame(const uint8_t *f, uint32_t len, void *v) {
             if (pll>ihl+4 && pl[ihl+2]==0x00 && pl[ihl+3]==0x44) c_dhcp_seen++; }
         if (g_dhcp_mode && is_dhcp_reply(pl, pll, &g_dtype, g_yi, g_dmask, g_dgw, g_dsrv, g_ddns))
             return;                                 /* DHCP reply captured, don't forward */
-        if (g_utun_fd >= 0) {                        /* IP an macOS ueber utun */
+        if (g_utun_fd >= 0) {                        /* IP to macOS via utun */
             uint8_t buf[2100]; uint32_t af = htonl(AF_INET);
             memcpy(buf, &af, 4); memcpy(buf+4, pl, pll);
             (void)!write(g_utun_fd, buf, pll+4);
@@ -528,16 +528,16 @@ static int scan_for_ssid(libusb_device_handle *h, const char *ssid, int *out_cha
     static const int chans[] = {1,2,3,4,5,6,7,8,9,10,11,12,13};
     if (rtl_hal_full_init(h, chans[0], 0, 0) != 0) return -1;
     ssid_scan_t s; memset(&s, 0, sizeof(s)); s.target = ssid;
-    printf("Suche Netzwerk \"%s\" (2,4GHz) ...\n", ssid);
+    printf("Searching for network \"%s\" (2.4GHz) ...\n", ssid);
     for (size_t i = 0; i < sizeof(chans)/sizeof(chans[0]); i++) {
-        /* rtl_rf_set_channel() direkt statt rtl_hal_set_channel(): dieser Scan
-         * ist reiner RX-Vorlauf vor rtl_wpa_connect(), das den eigentlichen
-         * Verbindungskanal ohnehin per rtl_hal_full_init() (inkl. TX-Power)
-         * neu aufsetzt -- die TX-Power fuer die hier durchlaufenen Kanaele
-         * spielt nie eine Rolle, da waehrend des Scans nie gesendet wird. */
+        /* rtl_rf_set_channel() directly instead of rtl_hal_set_channel(): this
+         * scan is a pure RX pre-pass before rtl_wpa_connect(), which sets up the
+         * actual connection channel from scratch via rtl_hal_full_init() (incl.
+         * TX power) anyway -- TX power for the channels swept here never
+         * matters, since nothing is transmitted during the scan. */
         if (rtl_rx_bound_ops()->set_channel(h, chans[i], 0) != 0) continue;   /* chip ops, not the 8812AU routine */
         rtl_rx_poll(h, 250, ssid_scan_cb, &s);
-        printf("\r  Kanal %2d ...", chans[i]); fflush(stdout);
+        printf("\r  Channel %2d ...", chans[i]); fflush(stdout);
         if (s.found) { printf("\n"); *out_channel = chans[i]; memcpy(out_bssid, s.bssid, 6); return 0; }
     }
     printf("\n");
@@ -545,8 +545,8 @@ static int scan_for_ssid(libusb_device_handle *h, const char *ssid, int *out_cha
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2) { printf("Nutzung: sudo %s <ssid> [--default] [--psk-stdin]\n", argv[0]); return 1; }
-    if (geteuid() != 0) { printf("Braucht root: sudo %s ...\n", argv[0]); return 1; }
+    if (argc < 2) { printf("Usage: sudo %s <ssid> [--default] [--psk-stdin]\n", argv[0]); return 1; }
+    if (geteuid() != 0) { printf("Needs root: sudo %s ...\n", argv[0]); return 1; }
     const char *ssid = argv[1];
     int channel = 0;
     uint8_t bssid[6];
@@ -569,7 +569,7 @@ int main(int argc, char **argv) {
     if (want_default && g_wifi_dev[0]) {
         char cmd[128], out[64];
         snprintf(cmd,sizeof(cmd),"networksetup -setairportpower %s off 2>/dev/null", g_wifi_dev);
-        printf("Schalte Apple-WLAN (%s) aus, damit der Adapter alleiniges Radio ist ...\n", g_wifi_dev);
+        printf("Turning Apple Wi-Fi (%s) off so the adapter is the only radio ...\n", g_wifi_dev);
         system(cmd); g_wifi_off = 1;
         /* Wait until the interface actually reports down, don't just sleep a
          * fixed guess -- the radio can take a variable few seconds to fully
@@ -583,7 +583,7 @@ int main(int argc, char **argv) {
             usleep(300000);
         }
         sleep(2);   /* extra margin: fully vacate the channel/RF frontend */
-        printf("Apple-WLAN Status: %s\n", out[0]?out:"inactive");
+        printf("Apple Wi-Fi status: %s\n", out[0]?out:"inactive");
     }
     { FILE *pp = popen("route -n get default 2>/dev/null | awk '/gateway/{print $2}'", "r");
       if (pp) { if (fgets(g_orig_gw, sizeof(g_orig_gw), pp)) g_orig_gw[strcspn(g_orig_gw,"\n")]=0; pclose(pp); } }
@@ -595,40 +595,40 @@ int main(int argc, char **argv) {
     if (psk_stdin) {
         if (fgets(pwbuf, sizeof(pwbuf), stdin)) { pwbuf[strcspn(pwbuf, "\r\n")] = 0; pw = pwbuf; }
     } else {
-        pw = getpass("WLAN-Passwort: ");
+        pw = getpass("Wi-Fi password: ");
     }
-    if (!pw||!*pw) { printf("Kein Passwort.\n"); return 1; }
+    if (!pw||!*pw) { printf("No password.\n"); return 1; }
 
     libusb_context *ctx=NULL; if (libusb_init(&ctx)) return 1;
     libusb_device_handle *h=NULL; uint16_t vid=0, pid=0; int claimed=0;
-    if (rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed)||!h){printf("Kein Geraet.\n");return 2;}
+    if (rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed)||!h){printf("No device.\n");return 2;}
 
-    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
+    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* enable the asynchronous RX path */
 
     int rc = 2;
     if (scan_for_ssid(h, ssid, &channel, bssid) != 0) {
-        printf("Netzwerk \"%s\" nicht gefunden (2,4GHz, Kanal 1-13 durchsucht).\n", ssid);
+        printf("Network \"%s\" not found (2.4GHz, channels 1-13 searched).\n", ssid);
         memset(pw,0,strlen(pw));
         goto done;
     }
-    printf("Gefunden: \"%s\" auf Kanal %d, BSSID %02x:%02x:%02x:%02x:%02x:%02x\n",
+    printf("Found: \"%s\" on channel %d, BSSID %02x:%02x:%02x:%02x:%02x:%02x\n",
            ssid, channel, bssid[0],bssid[1],bssid[2],bssid[3],bssid[4],bssid[5]);
 
-    printf("Verbinde mit WPA2 ...\n");
+    printf("Connecting with WPA2 ...\n");
     rc = rtl_wpa_connect(h, channel, bssid, ssid, pw, &K, 1);
     memset(pw,0,strlen(pw));
-    if (rc != 0) { printf("Verbindung fehlgeschlagen (%d).\n", rc); goto done; }
-    if (!K.have_gtk) printf("Warnung: kein GTK (Broadcast-RX eingeschraenkt).\n");
-    printf("Verbunden. Lege utun an ...\n");
+    if (rc != 0) { printf("Connection failed (%d).\n", rc); goto done; }
+    if (!K.have_gtk) printf("Warning: no GTK (broadcast RX limited).\n");
+    printf("Connected. Creating utun ...\n");
 
     char ifn[32]="utun9";
     g_utun_fd = utun_open(ifn, sizeof(ifn));
-    if (g_utun_fd < 0) { printf("utun-Anlage fehlgeschlagen: %s\n", strerror(errno)); goto done; }
+    if (g_utun_fd < 0) { printf("utun creation failed: %s\n", strerror(errno)); goto done; }
     fcntl(g_utun_fd, F_SETFL, O_NONBLOCK);
     printf("utun: %s\n", ifn);
 
     /* Settle: let the AP finish plumbing us as a station, drain early RX. */
-    printf("Settle 800ms nach Verbindung ...\n");
+    printf("Settle 800ms after connecting ...\n");
     for (int r=0;r<6;r++) rtl_rx_poll(h,150,on_frame,h);
 
     /* Isolation test BEFORE DHCP: does ANY encrypted broadcast DATA frame we
@@ -638,10 +638,10 @@ int main(int argc, char **argv) {
      * all our encrypted broadcast TX. Probe a few likely-live IPs including
      * the known gateway. */
     { uint8_t probe_ip[4] = {192,168,178,1};
-      printf("ARP-Isolationstest A: sende 5x ARP-who-has 192.168.178.1 (encrypted/CCMP broadcast) ...\n");
+      printf("ARP isolation test A: sending 5x ARP-who-has 192.168.178.1 (encrypted/CCMP broadcast) ...\n");
       for (int t=0;t<5;t++){ arp_request(h,probe_ip); rtl_rx_poll(h,300,on_frame,h); }
       long enc_replies = c_arp_reply_any;
-      printf("  Antworten: %ld\n", enc_replies);
+      printf("  Replies: %ld\n", enc_replies);
 
       /* Test B sends an UNENCRYPTED data frame after the keys are installed.
        * That is a protocol violation; WPA3-transition / PMF-capable APs (seen
@@ -649,22 +649,22 @@ int main(int argc, char **argv) {
        * association, so it is opt-in now: ALFA_PLAIN_TEST=1. */
       long plain_replies = 0;
       if (getenv("ALFA_PLAIN_TEST")) {
-        printf("ARP-Isolationstest B: sende 5x ARP-who-has 192.168.178.1 (PLAIN/unencrypted broadcast) ...\n");
+        printf("ARP isolation test B: sending 5x ARP-who-has 192.168.178.1 (PLAIN/unencrypted broadcast) ...\n");
         for (int t=0;t<5;t++){ arp_request_plain(h,probe_ip); rtl_rx_poll(h,300,on_frame,h); }
         plain_replies = c_arp_reply_any - enc_replies;
-        printf("  Antworten: %ld\n", plain_replies);
+        printf("  Replies: %ld\n", plain_replies);
       } else {
-        printf("ARP-Isolationstest B (PLAIN) uebersprungen: ALFA_PLAIN_TEST=1 zum Aktivieren (APs mit PMF deauthen sonst).\n");
+        printf("ARP isolation test B (PLAIN) skipped: set ALFA_PLAIN_TEST=1 to enable (otherwise APs with PMF deauth us).\n");
       }
 
       if (enc_replies>0)
-        printf("  -> Encrypted broadcast TX funktioniert. Problem ist DHCP/Server-spezifisch.\n");
+        printf("  -> Encrypted broadcast TX works. The problem is DHCP/server-specific.\n");
       else if (plain_replies>0)
-        printf("  -> UNENCRYPTED broadcast TX funktioniert, ENCRYPTED nicht -> Bug in rtl_ccmp_encrypt_frame.\n");
+        printf("  -> UNENCRYPTED broadcast TX works, ENCRYPTED does not -> bug in rtl_ccmp_encrypt_frame.\n");
       else if (getenv("ALFA_PLAIN_TEST"))
-        printf("  -> Auch PLAIN broadcast TX bekommt keine Antwort -> genereller Broadcast-Data-TX-Fehler\n"
-               "     (unabhaengig von Verschluesselung; evtl. Policy-Drop unverschluesselter Data-Frames\n"
-               "      im Netz ist ebenfalls moeglich und wuerde dieses Ergebnis erklaeren).\n");
+        printf("  -> PLAIN broadcast TX gets no reply either -> general broadcast data TX failure\n"
+               "     (independent of encryption; a policy drop of unencrypted data frames\n"
+               "      on the network is also possible and would explain this result).\n");
     }
 
     /* DHCP */
@@ -682,9 +682,9 @@ int main(int argc, char **argv) {
     il = dhcp_build(pkt,1,xid,NULL,NULL);            /* DISCOVER -> OFFER (type 2) */
     for (int t=0;t<30 && g_dtype!=2;t++){ send_ip_frame(h,bc,ETH_IP,pkt,il);
         for(int r=0;r<5 && g_dtype!=2;r++) rtl_rx_poll(h,120,on_frame,h);
-        if (t==9 || t==19) printf("  ... DISCOVER %d gesendet, noch kein OFFER (dhcp_seen=%ld)\n", t+1, c_dhcp_seen); }
+        if (t==9 || t==19) printf("  ... DISCOVER %d sent, no OFFER yet (dhcp_seen=%ld)\n", t+1, c_dhcp_seen); }
     if (g_dtype!=2){
-        printf("Kein DHCP-OFFER. Diagnose: dhcp_frames=%ld entschluesselte=%ld (rx_ip=%ld rx_other=%ld)\n",
+        printf("No DHCP OFFER. Diagnostics: dhcp_frames=%ld decrypted=%ld (rx_ip=%ld rx_other=%ld)\n",
                c_dhcp_seen, c_rx_dec, c_rx_ip, c_rx_other);
         printf("  unicast: seen=%ld decfail=%ld   broadcast: seen=%ld decfail=%ld\n",
                c_uni_seen, c_uni_decfail, c_bcast_seen, c_bcast_decfail);
@@ -700,15 +700,15 @@ int main(int argc, char **argv) {
     il = dhcp_build(pkt,3,xid,g_our_ip,g_dsrv);      /* REQUEST -> ACK (type 5) */
     for (int t=0;t<15 && g_dtype!=5;t++){ send_ip_frame(h,bc,ETH_IP,pkt,il);
         for(int r=0;r<8 && g_dtype!=5;r++) rtl_rx_poll(h,150,on_frame,h); }
-    if (g_dtype!=5){ printf("Kein DHCP-ACK.\n"); goto done; }
+    if (g_dtype!=5){ printf("No DHCP ACK.\n"); goto done; }
     g_dhcp_mode = 0;
-    printf("ACK: IP %u.%u.%u.%u  GW %u.%u.%u.%u  Maske %u.%u.%u.%u\n",
+    printf("ACK: IP %u.%u.%u.%u  GW %u.%u.%u.%u  Mask %u.%u.%u.%u\n",
            g_our_ip[0],g_our_ip[1],g_our_ip[2],g_our_ip[3],
            g_gw_ip[0],g_gw_ip[1],g_gw_ip[2],g_gw_ip[3],
            g_mask[0],g_mask[1],g_mask[2],g_mask[3]);
 
-    /* Interface konfigurieren. Default-Route NUR mit --default (sonst bleibt
-     * dein System-Internet unangetastet; teste mit `ping -b utunX ...`). */
+    /* Configure the interface. Default route ONLY with --default (otherwise
+     * your system internet stays untouched; test with `ping -b utunX ...`). */
     strncpy(g_ifn, ifn, sizeof(g_ifn)-1);
     char cmd[256];
     snprintf(cmd,sizeof(cmd),"ifconfig %s inet %u.%u.%u.%u %u.%u.%u.%u netmask 255.255.255.255 up",
@@ -735,36 +735,36 @@ int main(int argc, char **argv) {
             g_gw_ip[0],g_gw_ip[1],g_gw_ip[2],g_gw_ip[3]);
         printf("+ %s\n", cmd); system(cmd);
         g_changed_default = 1;
-        printf("  (Default-Route auf %s gebogen; wird bei Beenden auf %s zurueckgesetzt)\n",
-               ifn, g_orig_gw[0]?g_orig_gw:"(keine)");
+        printf("  (Default route redirected to %s; will be reset to %s on exit)\n",
+               ifn, g_orig_gw[0]?g_orig_gw:"(none)");
 
-        /* DNS: ohne das loest macOS keinen einzigen Hostnamen ueber die
-         * Bridge auf, obwohl der IP-Verkehr laengst funktioniert -- DHCP-
-         * Option 6 nutzen, sonst das Gateway (bei einer FritzBox ohnehin
-         * derselbe DNS-Proxy). Nur mit --default gesetzt: ohne umgebogene
-         * Default-Route bliebe ein globaler DNS-Umbau ein Teil-Tunnel, der
-         * mehr verwirrt als hilft. */
+        /* DNS: without this macOS resolves not a single hostname over the
+         * bridge, even though IP traffic has long been working -- use DHCP
+         * option 6, otherwise the gateway (on a FritzBox the same DNS proxy
+         * anyway). Only set with --default: without a redirected default
+         * route, a global DNS change would be a partial tunnel that confuses
+         * more than it helps. */
         const uint8_t *dns_ip = (g_ddns[0]|g_ddns[1]|g_ddns[2]|g_ddns[3]) ? g_ddns : g_gw_ip;
         set_dns(ifn, dns_ip);
         g_dns_set = 1;
-        printf("  DNS auf %u.%u.%u.%u gesetzt (State:/Network/Service/%s/DNS)\n",
+        printf("  DNS set to %u.%u.%u.%u (State:/Network/Service/%s/DNS)\n",
                dns_ip[0], dns_ip[1], dns_ip[2], dns_ip[3], ifn);
     } else {
-        printf("  Default-Route unveraendert. Test ohne Systemstoerung:\n");
+        printf("  Default route unchanged. Test without disturbing the system:\n");
         printf("    sudo ping -b %s %u.%u.%u.%u\n", ifn, g_gw_ip[0],g_gw_ip[1],g_gw_ip[2],g_gw_ip[3]);
     }
 
-    /* Gateway-MAC per ARP aufloesen (fuer die 802.11-addr3 unserer TX). */
+    /* Resolve the gateway MAC via ARP (for the 802.11 addr3 of our TX). */
     printf("ARP Gateway ...\n");
     for (int t=0;t<10 && !g_have_gw_mac;t++){ arp_request(h,g_gw_ip);
         for(int r=0;r<6 && !g_have_gw_mac;r++) rtl_rx_poll(h,150,on_frame,h); }
-    printf("Gateway-MAC: %s\n", g_have_gw_mac?"ok":"unbekannt (nutze Broadcast)");
+    printf("Gateway MAC: %s\n", g_have_gw_mac?"ok":"unknown (using broadcast)");
 
     { uint32_t rcr = rtl_read32(h, 0x0608, NULL) | (1u << 12);   /* RCR_ACF: see ACKs addressed to us (diagnostic) */
       rtl_write32(h, 0x0608, rcr); }
-    printf("\nBridge laeuft. Teste z.B.:  ping -c3 %u.%u.%u.%u\n",
+    printf("\nBridge running. Test e.g.:  ping -c3 %u.%u.%u.%u\n",
            g_gw_ip[0],g_gw_ip[1],g_gw_ip[2],g_gw_ip[3]);
-    printf("(Erste Fassung — Routing/DHCP-Feinschliff nach deinem Testlauf.)\n");
+    printf("(First version — routing/DHCP fine-tuning after your test run.)\n");
     uint8_t ub[2100];
     time_t last = time(NULL);
     long last_tx_count = c_tx;
@@ -777,10 +777,10 @@ int main(int argc, char **argv) {
                     g_our_ip[0], g_our_ip[1], g_our_ip[2], g_our_ip[3],
                     g_pend_arp_mac[0], g_pend_arp_mac[1], g_pend_arp_mac[2], g_pend_arp_mac[3], g_pend_arp_mac[4], g_pend_arp_mac[5]);
         }
-        for (;;) {                                  /* utun leerlesen, nicht nur 1 Paket */
+        for (;;) {                                  /* drain utun, not just 1 packet */
             int n = (int)read(g_utun_fd, ub, sizeof(ub));
             if (n <= 4) break;
-            const uint8_t *ip = ub + 4;             /* AF-Header ueberspringen */
+            const uint8_t *ip = ub + 4;             /* skip the AF header */
             if ((n-4) >= 20 && ip[9]==1) { int ihl=(ip[0]&0x0f)*4;
                 if ((n-4)>ihl && ip[ihl]==8) c_icmp_out++; } /* ICMP Echo Request */
             const uint8_t *dst = g_have_gw_mac ? g_gw_mac : bc;
@@ -811,11 +811,11 @@ int main(int argc, char **argv) {
 done:
     rtl_wpa_leave(h);                  /* deauth our own association so the next connect starts clean */
     rtl_rx_unbind();
-    restore_routing();                 /* Default-Route zuruecksetzen, Netz nie kaputt lassen */
+    restore_routing();                 /* reset the default route, never leave the network broken */
     if (g_utun_fd>=0) close(g_utun_fd);
     if (claimed) libusb_release_interface(h,0);
     if (h) libusb_close(h);
     libusb_exit(ctx);
-    if (g_stop) printf("\nBeendet, Routing wiederhergestellt.\n");
+    if (g_stop) printf("\nStopped, routing restored.\n");
     return rc;
 }

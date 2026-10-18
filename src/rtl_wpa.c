@@ -1,6 +1,6 @@
 /*
- * rtl_wpa — WPA2-PSK-Verbindung (Auth + Assoc + 4-Way-Handshake) als Funktion.
- * Uebernommen aus dem verifizierten connect-Tool (msg3/CCMP live bestaetigt).
+ * rtl_wpa — WPA2-PSK connection (auth + assoc + 4-way handshake) as a function.
+ * Taken from the verified connect tool (msg3/CCMP confirmed live).
  */
 #include "rtl_wpa.h"
 #include "rtl_usb.h"
@@ -97,7 +97,7 @@ static int send_eapol(libusb_device_handle *h, uint16_t ki, const uint8_t rep[8]
 int rtl_wpa_connect(libusb_device_handle *h, int channel,
                     const uint8_t bssid[6], const char *ssid, const char *psk,
                     wpa_keys_t *k, int verbose) {
-    /* eigene MAC aus efuse waere schoener; hier fest wie im Rest des Projekts. */
+    /* own MAC from efuse would be nicer; hardcoded here like in the rest of the project. */
     static const uint8_t sa[6] = { 0x00,0xc0,0xca,0xbc,0x4e,0xfa };
     memcpy(w_sa, sa, 6); memcpy(w_bssid, bssid, 6);
     w_verbose = verbose; w_m1_count = 0; w_m3_count = 0;
@@ -151,7 +151,7 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
      *     assumption that "accept Data/Control frame type" gates were needed
      *     for EAPOL to arrive. The reference driver's default RCR has NEITHER
      *     bit set, yet receives Data frames (EAPOL included) fine -- the real
-     *     fix for "keine msg1/msg3" was the REG_BSSID/MSR-early ordering fix
+     *     fix for "no msg1/msg3" was the REG_BSSID/MSR-early ordering fix
      *     made earlier in this function, not these bits. Worse, RCR_ACF
      *     accepts every Control-type frame (RTS/CTS/ACK) from EVERY station
      *     in radio range, not just our AP -- on a busy 2.4GHz channel this
@@ -189,10 +189,10 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
     /* No pre-emptive deauth here (deliberately removed). A normal Auth
      * request already supersedes any stale AP-side association state for our
      * MAC -- deauth was never actually required for that. Confirmed live via
-     * the FRITZ!Box's own event log ("WLAN-Geraet wurde abgemeldet", AP-
-     * initiated) that repeated deauth-heavy reconnect cycles during iterative
-     * testing look like deauth-flood behavior to the AP, which then defends
-     * against this station. Deauth frames must stay out of the normal
+     * the FRITZ!Box's own event log ("WLAN-Geraet wurde abgemeldet", i.e. "WLAN
+     * device was logged off", AP-initiated) that repeated deauth-heavy
+     * reconnect cycles during iterative testing look like deauth-flood
+     * behavior to the AP, which then defends against this station. Deauth frames must stay out of the normal
      * connect path; inject.c/associate.c (explicit attack/test tools) are
      * the only appropriate place for deliberate deauth. */
 
@@ -202,7 +202,7 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
     auth[24]=0;auth[25]=0;auth[26]=1;auth[27]=0;auth[28]=0;auth[29]=0;
     for(int i=0;i<8&&!s.got_auth;i++){int tr=rtl_tx_inject(h,auth,30,RTL_RATE_6M,RTL_QSLT_MGNT,rtl_rx_bound_ops()->tx_ep_mgmt);
         if(tr&&verbose)printf("[wpa] auth TX error: %s\n",libusb_error_name(tr));rtl_rx_poll(h,150,cb,&s);}
-    if(!s.got_auth||s.auth_status!=0){if(verbose)printf("[wpa] Auth fehlgeschlagen (%d)\n",s.auth_status);return -2;}
+    if(!s.got_auth||s.auth_status!=0){if(verbose)printf("[wpa] Auth failed (%d)\n",s.auth_status);return -2;}
 
     uint8_t rsn[]={0x30,0x14,0x01,0,0,0x0f,0xac,0x04,0x01,0,0,0x0f,0xac,0x04,0x01,0,0,0x0f,0xac,0x02,0,0};
     uint8_t as[128]; int p=0;
@@ -213,11 +213,11 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
     {uint8_t er[]={0x32,0x04,0x30,0x48,0x60,0x6c};memcpy(as+p,er,6);p+=6;}
     memcpy(as+p,rsn,sizeof(rsn));p+=sizeof(rsn);
     for(int i=0;i<8&&!s.got_assoc;i++){rtl_tx_inject(h,as,p,RTL_RATE_6M,RTL_QSLT_MGNT,rtl_rx_bound_ops()->tx_ep_mgmt);rtl_rx_poll(h,150,cb,&s);}
-    if(!s.got_assoc||s.assoc_status!=0){if(verbose)printf("[wpa] Assoc fehlgeschlagen (%d)\n",s.assoc_status);return -3;}
+    if(!s.got_assoc||s.assoc_status!=0){if(verbose)printf("[wpa] Assoc failed (%d)\n",s.assoc_status);return -3;}
     k->aid = s.aid; if(verbose)printf("[wpa] associated, AID %d\n", s.aid);
 
     for(int i=0;i<20&&!s.got_m1;i++)rtl_rx_poll(h,150,cb,&s);
-    if(!s.got_m1){if(verbose)printf("[wpa] keine msg1\n");return -4;}
+    if(!s.got_m1){if(verbose)printf("[wpa] no msg1\n");return -4;}
 
     uint8_t snonce[32]; for(int i=0;i<32;i++)snonce[i]=(uint8_t)arc4random();
     if (verbose) { hexdump("ANonce", s.anonce, 32); hexdump("SNonce", snonce, 32); hexdump("AA (bssid)", w_bssid, 6); hexdump("SPA (our sa)", w_sa, 6); printf("[wpa]   ssid='%s' (%d bytes), psk length %zu\n", ssid, slen, strlen(psk)); }
@@ -228,7 +228,7 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
     if(send_eapol(h,0x010A,s.replay_m1,snonce,rsn,sizeof(rsn),k->kck)!=0)return -5;
     for(int i=0;i<20&&!s.got_m3;i++)rtl_rx_poll(h,150,cb,&s);
     if(!s.got_m3){
-        if(verbose) printf("[wpa] keine msg3 (msg1 seen %d times%s)\n", w_m1_count,
+        if(verbose) printf("[wpa] no msg3 (msg1 seen %d times%s)\n", w_m1_count,
             w_m1_count > 1 ? ": AP re-sent msg1, so it rejected our msg2 MIC (PTK/password/SSID mismatch)" : "");
         return -6;
     }
@@ -250,7 +250,7 @@ int rtl_wpa_connect(libusb_device_handle *h, int channel,
         }
     }
 
-    /* GTK aus msg3 auspacken */
+    /* unwrap the GTK from msg3 */
     if(s.m3_kdlen>=24 && (s.m3_kdlen%8)==0){
         uint8_t kd[256];
         if(rtl_aes_unwrap(k->kek,s.m3_kd,s.m3_kdlen,kd)==0){

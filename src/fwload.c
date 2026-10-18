@@ -11,27 +11,27 @@
 
 int main(void) {
     libusb_context *ctx = NULL;
-    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init fehlgeschlagen\n"); return 1; }
+    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init failed\n"); return 1; }
 
     libusb_device_handle *h = NULL;
     uint16_t vid = 0, pid = 0; int claimed = 0;
     int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
-    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("Kein bekannter Adapter gefunden. Adapter einstecken.\n"); libusb_exit(ctx); return 2; }
-    if (rc != 0 || !h) { fprintf(stderr, "Oeffnen fehlgeschlagen: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
+    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("No supported adapter found. Plug in the adapter.\n"); libusb_exit(ctx); return 2; }
+    if (rc != 0 || !h) { fprintf(stderr, "Open failed: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
 
     const rtl_chip_ops *o = rtl_chip_probe(vid, pid);
-    printf("Geraet %04x:%04x (%s), Claim: %s\n", vid, pid, o->name, claimed ? "OK" : "NICHT");
+    printf("Device %04x:%04x (%s), Claim: %s\n", vid, pid, o->name, claimed ? "OK" : "NOT");
 
     int pr = o->power_on(h, 0);
-    printf("Power-On: %s\n", pr == 0 ? "OK" : "fehlgeschlagen");
-    if (pr != 0) { printf("Abbruch: ohne Power-On kein Firmware-Download.\n"); goto done; }
+    printf("Power-On: %s\n", pr == 0 ? "OK" : "failed");
+    if (pr != 0) { printf("Aborting: no firmware download without power-on.\n"); goto done; }
 
-    printf("\nFirmware-Download:\n");
+    printf("\nFirmware download:\n");
     rc = o->fw_download(h, 1);
-    if (rc == 0)      printf("\n==> FIRMWARE LAEUFT. Chip voll initialisiert (bis auf PHY/RF).\n");
-    else if (rc == 1) printf("\n==> Checksum fehlgeschlagen (Uebertragung).\n");
-    else if (rc == 2) printf("\n==> Firmware nicht ready (WINTINI_RDY).\n");
-    else              printf("\n==> USB-Fehler beim Download: %s\n", libusb_error_name(rc));
+    if (rc == 0)      printf("\n==> FIRMWARE RUNNING. Chip fully initialized (except PHY/RF).\n");
+    else if (rc == 1) printf("\n==> Checksum failed (transfer).\n");
+    else if (rc == 2) printf("\n==> Firmware not ready (WINTINI_RDY).\n");
+    else              printf("\n==> USB error during download: %s\n", libusb_error_name(rc));
 
 done:
     if (claimed) libusb_release_interface(h, 0);

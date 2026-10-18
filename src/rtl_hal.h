@@ -1,9 +1,9 @@
 /*
- * rtl_hal — Orchestrator: vollstaendiges Bring-up ueber rtl_chip_ops.
+ * rtl_hal — orchestrator: complete bring-up via rtl_chip_ops.
  *
- * Die Reihenfolge (Power-On -> Firmware -> MAC -> BB -> RF -> Kanal ->
- * Kalibrierung -> Monitor-RCR) ist chip-unabhaengig; WAS jeder Schritt tut,
- * liefert die ops-Tabelle aus rtl_chip.h.
+ * The order (power-on -> firmware -> MAC -> BB -> RF -> channel ->
+ * calibration -> monitor RCR) is chip-independent; WHAT each step does is
+ * supplied by the ops table from rtl_chip.h.
  */
 #ifndef RTL_HAL_H
 #define RTL_HAL_H
@@ -17,26 +17,26 @@ typedef struct {
     const rtl_chip_ops   *ops;
     uint16_t              vid;
     uint16_t              pid;
-    int                   channel;   /* zuletzt erfolgreich gesetzter Kanal */
+    int                   channel;   /* last channel set successfully */
 } rtl_dev;
 
-/* Bindet die ops-Tabelle anhand der USB-ID. Danach ist dev nutzbar.
- * Unbekannte ID -> rtl_chip_default() (Verhalten wie bisher). */
+/* Binds the ops table by USB ID. dev is usable afterwards.
+ * Unknown ID -> rtl_chip_default() (same behavior as before). */
 void rtl_dev_bind(rtl_dev *dev, libusb_device_handle *h, uint16_t vid, uint16_t pid);
 
-/* Wie rtl_dev_bind, holt VID/PID aber selbst aus dem USB-Descriptor. */
+/* Like rtl_dev_bind, but reads VID/PID from the USB descriptor itself. */
 void rtl_dev_bind_auto(rtl_dev *dev, libusb_device_handle *h);
 
-/* Bring-up ueber die ops-Tabelle. with_cal=1 fuegt LCK+IQK hinzu.
- * Return: 0 ok, sonst der rc des fehlgeschlagenen Schritts. */
+/* Bring-up via the ops table. with_cal=1 adds LCK+IQK.
+ * Return: 0 ok, otherwise the rc of the failed step. */
 int rtl_hal_init_dev(rtl_dev *dev, int channel, int with_cal, int verbose);
 
-/* Kanalwechsel nach dem Bring-up (aktualisiert dev->channel und zieht die
- * TX-Power fuer den neuen Kanal nach -- das fehlte bisher beim Scannen). */
+/* Channel change after bring-up (updates dev->channel and updates the TX
+ * power for the new channel -- previously missing when scanning). */
 int rtl_hal_set_channel(rtl_dev *dev, int channel, int verbose);
 
-/* Kompatibilitaets-Wrapper: bindet die ops selbst. Bestehende Tools
- * brauchen keine Aenderung. */
+/* Compatibility wrapper: binds the ops itself. Existing tools need no
+ * changes. */
 int rtl_hal_full_init(libusb_device_handle *h, int channel, int with_cal, int verbose);
 
 #endif /* RTL_HAL_H */

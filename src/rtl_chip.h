@@ -1,11 +1,11 @@
 /*
- * rtl_chip — Chip-Abstraktion (ops table).
+ * rtl_chip — chip abstraction (ops table).
  *
- * Buendelt alle chip-spezifischen Einsprungpunkte hinter einer Tabelle, damit
- * rtl_hal / rtl_rx / rtl_tx keinen 8812AU-spezifischen Code mehr enthalten.
- * Jeder Chip ist eine Instanz von rtl_chip_ops (rtl_chip.c fuer den 8812AU,
- * rtl8821au.c fuer den 8821AU). Die USB-ID -> Chip Zuordnung steht in
- * rtl_ids.c, damit kleine Tools sie ohne den ganzen Core linken koennen.
+ * Bundles all chip-specific entry points behind one table, so that
+ * rtl_hal / rtl_rx / rtl_tx no longer contain 8812AU-specific code.
+ * Each chip is an instance of rtl_chip_ops (rtl_chip.c for the 8812AU,
+ * rtl8821au.c for the 8821AU). The USB ID -> chip mapping lives in
+ * rtl_ids.c, so small tools can link it without the whole core.
  */
 #ifndef RTL_CHIP_H
 #define RTL_CHIP_H
@@ -14,19 +14,19 @@
 #include <libusb.h>
 #include "rtl_ids.h"
 
-/* Ergebnis des Zerlegens EINES aggregierten USB-RX-Subframes. */
+/* Result of parsing ONE aggregated USB RX subframe. */
 typedef struct {
-    uint32_t hdr_len;    /* Bytes vor dem 802.11-Frame (Desc + drvinfo + shift) */
-    uint32_t pkt_len;    /* Laenge des 802.11-Frames                            */
-    uint32_t advance;    /* Bytes bis zum naechsten Subframe (bereits 8-aligned) */
-    int      is_report;  /* !=0 -> C2H/Report, kein 802.11-Frame                 */
+    uint32_t hdr_len;    /* bytes before the 802.11 frame (desc + drvinfo + shift) */
+    uint32_t pkt_len;    /* length of the 802.11 frame                          */
+    uint32_t advance;    /* bytes to the next subframe (already 8-aligned)      */
+    int      is_report;  /* !=0 -> C2H/report, not an 802.11 frame              */
 } rtl_rx_sub;
 
 typedef struct rtl_chip_ops {
     const char     *name;
     uint8_t         chip;        /* enum rtl_chip_id (rtl_ids.h) */
 
-    /* --- Bring-up (Reihenfolge legt rtl_hal fest, nicht der Chip) --- */
+    /* --- Bring-up (order is set by rtl_hal, not by the chip) --- */
     int  (*power_on)      (libusb_device_handle *h, int verbose);
     int  (*fw_download)   (libusb_device_handle *h, int verbose);
     int  (*fw_active_mode)(libusb_device_handle *h, int verbose);
@@ -41,28 +41,28 @@ typedef struct rtl_chip_ops {
     void (*txpwr_readback)(libusb_device_handle *h, const char *label);
     void (*led_on)        (libusb_device_handle *h);
     void (*led_off)       (libusb_device_handle *h);
-    void (*dbg_dump)      (libusb_device_handle *h);   /* optional, darf NULL sein */
+    void (*dbg_dump)      (libusb_device_handle *h);   /* optional, may be NULL */
 
-    /* --- Datenpfad-Geometrie --- */
+    /* --- Data path geometry --- */
     uint8_t  rx_ep;
     uint8_t  tx_ep_mgmt;
     uint16_t rxdesc_size;
     uint16_t txdesc_size;
 
-    /* Zerlegt den Deskriptor an 'p'. 0 = ok, <0 = unbrauchbar/abbrechen. */
+    /* Parses the descriptor at 'p'. 0 = ok, <0 = unusable/abort. */
     int (*rx_parse_desc)(const uint8_t *p, int avail, rtl_rx_sub *out);
 
     int (*tx_inject)(libusb_device_handle *h, const uint8_t *frame, int len,
                      uint8_t rate, uint8_t qsel, uint8_t ep);
 } rtl_chip_ops;
 
-/* (VID, PID) -> ops. Unbekannte ID liefert rtl_chip_default() (Verhalten wie bisher). */
+/* (VID, PID) -> ops. Unknown ID returns rtl_chip_default() (same behavior as before). */
 const rtl_chip_ops *rtl_chip_probe(uint16_t vid, uint16_t pid);
-/* enum rtl_chip_id -> ops, NULL wenn unbekannt. */
+/* enum rtl_chip_id -> ops, NULL if unknown. */
 const rtl_chip_ops *rtl_chip_for(uint8_t chip);
 const rtl_chip_ops *rtl_chip_default(void);
 
-/* Gemeinsamer 88xxA-RX-Deskriptor (8812A und 8821A teilen das Format). */
+/* Common 88xxA RX descriptor (8812A and 8821A share the format). */
 int rtl88xxa_rx_parse_desc(const uint8_t *p, int avail, rtl_rx_sub *out);
 
 extern const rtl_chip_ops rtl8812au_ops;

@@ -1072,7 +1072,7 @@ static u32 array_mp_8812a_radiob[] = {
 };
 
 /* ===================================================================== *
- *  Tabellen-Apply (odm_read_and_config_mp_8812a_radioa/b + check_positive)
+ *  Table apply (odm_read_and_config_mp_8812a_radioa/b + check_positive)
  * ===================================================================== */
 
 #define COND_ELSE   2
@@ -1149,8 +1149,8 @@ static void detect_frontend(libusb_device_handle *h, int verbose)
     if (rfe_option != 0xFF) g_rfe_type = rfe_option & 0x3F;
 
     printf("[rf] Frontend (Efuse): PA 2G=%s 5G=%s  LNA 2G=%s 5G=%s  rfe_type=%d\n",
-           ext_pa_2g?"extern":"intern", ext_pa_5g?"extern":"intern",
-           ext_lna_2g?"extern":"intern", ext_lna_5g?"extern":"intern", g_rfe_type);
+           ext_pa_2g?"external":"internal", ext_pa_5g?"external":"internal",
+           ext_lna_2g?"external":"internal", ext_lna_5g?"external":"internal", g_rfe_type);
     (void)verbose;
 }
 
@@ -1285,7 +1285,7 @@ static int apply_rf_table(libusb_device_handle *h, int path,
 	}
 
 	if (verbose)
-		printf("[rtl_rf] radio%c: %d Registerschreibvorgaenge (rc=%d)\n",
+		printf("[rtl_rf] radio%c: %d register writes (rc=%d)\n",
 		       (path == RTL_RF_PATH_A) ? 'A' : 'B', applied, rc);
 	return rc;
 }
@@ -1307,7 +1307,7 @@ int rtl_rf_init(libusb_device_handle *h, int verbose)
 	detect_frontend(h, verbose);
 
 	if (verbose)
-		printf("[rtl_rf] RF-Init: radioA (%u u32) auf Pfad A, radioB (%u u32) auf Pfad B\n",
+		printf("[rtl_rf] RF init: radioA (%u u32) on path A, radioB (%u u32) on path B\n",
 		       lena, lenb);
 
 	/* Path A: radioA table */
@@ -1321,7 +1321,7 @@ int rtl_rf_init(libusb_device_handle *h, int verbose)
 #endif
 
 	if (verbose)
-		printf("[rtl_rf] RF-Init fertig (rc=%d)\n", rc);
+		printf("[rtl_rf] RF init done (rc=%d)\n", rc);
 	return rc;
 }
 

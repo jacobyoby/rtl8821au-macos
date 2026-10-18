@@ -135,7 +135,7 @@ static void dec_cb(const uint8_t *f, uint32_t len, void *v) {
                 g_dec_ok = 1;
                 printf("  CCMP OK (%s, %s): LLC/SNAP EtherType %02x%02x, %d Byte Payload\n",
                        bcast ? "Broadcast/GTK" : "Unicast/TK",
-                       k == 0 ? "mit FCS" : "ohne FCS", out[6], out[7], ol - 8);
+                       k == 0 ? "with FCS" : "without FCS", out[6], out[7], ol - 8);
             }
             return;
         }
@@ -190,21 +190,21 @@ static int selftest(void) {
     CCKeyDerivationPBKDF(kCCPBKDF2, "password", 8, (const uint8_t*)"IEEE", 4,
                          kCCPRFHmacAlgSHA1, 4096, pmk, 32);
     int ok = memcmp(pmk, want, 32) == 0;
-    printf("PBKDF2-Selbsttest (passphrase=password, ssid=IEEE): %s\n", ok ? "PASS" : "FAIL");
+    printf("PBKDF2 self-test (passphrase=password, ssid=IEEE): %s\n", ok ? "PASS" : "FAIL");
     printf("  PMK = "); for (int i=0;i<32;i++) printf("%02x", pmk[i]); printf("\n");
     return ok ? 0 : 1;
 }
 
 int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "--selftest") == 0) return selftest();
-    if (argc < 4) { printf("Nutzung: %s <kanal> <bssid> <ssid>   |   %s --selftest\n", argv[0], argv[0]); return 1; }
+    if (argc < 4) { printf("Usage: %s <channel> <bssid> <ssid>   |   %s --selftest\n", argv[0], argv[0]); return 1; }
     int channel = atoi(argv[1]);
-    if (!parse_mac(argv[2], g_bssid)) { printf("BSSID ungueltig\n"); return 1; }
+    if (!parse_mac(argv[2], g_bssid)) { printf("Invalid BSSID\n"); return 1; }
     const char *ssid = argv[3];
     int slen = (int)strlen(ssid); if (slen > 32) slen = 32;
 
-    char *pw = getpass("WLAN-Passwort (bleibt lokal): ");
-    if (!pw || !*pw) { printf("Kein Passwort.\n"); return 1; }
+    char *pw = getpass("Wi-Fi password (stays local): ");
+    if (!pw || !*pw) { printf("No password.\n"); return 1; }
 
     /* PMK = PBKDF2-SHA1(psk, ssid, 4096, 32) */
     uint8_t pmk[32];
@@ -215,11 +215,11 @@ int main(int argc, char **argv) {
     libusb_context *ctx = NULL;
     if (libusb_init(&ctx) != 0) return 1;
     libusb_device_handle *h = NULL; uint16_t vid=0, pid=0; int claimed=0;
-    if (rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed) || !h) { printf("Kein Geraet.\n"); libusb_exit(ctx); return 2; }
+    if (rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed) || !h) { printf("No device.\n"); libusb_exit(ctx); return 2; }
 
-    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
+    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* enable the asynchronous RX path */
 
-    if (rtl_hal_full_init(h, channel, 0, 0) != 0) { printf("Init fehlgeschlagen.\n"); goto done; }
+    if (rtl_hal_full_init(h, channel, 0, 0) != 0) { printf("Init failed.\n"); goto done; }
     rtl_reg_write(h, REG_MACID, g_sa, 6);
 
     hs_t s; memset(&s, 0, sizeof(s));
@@ -228,7 +228,7 @@ int main(int argc, char **argv) {
     uint8_t auth[30]={0xB0,0x00,0,0}; memcpy(auth+4,g_bssid,6); memcpy(auth+10,g_sa,6); memcpy(auth+16,g_bssid,6);
     auth[24]=0;auth[25]=0;auth[26]=1;auth[27]=0;auth[28]=0;auth[29]=0;
     for (int i=0;i<8 && !s.got_auth;i++){ rtl_tx_inject(h,auth,30,RTL_RATE_6M,RTL_QSLT_MGNT,rtl_rx_bound_ops()->tx_ep_mgmt); rtl_rx_poll(h,150,cb,&s); }
-    if (!s.got_auth || s.auth_status!=0){ printf("Auth fehlgeschlagen (status %d).\n", s.auth_status); goto done; }
+    if (!s.got_auth || s.auth_status!=0){ printf("Auth failed (status %d).\n", s.auth_status); goto done; }
     printf("Auth OK.\n");
 
     /* Assoc with RSN */
@@ -241,13 +241,13 @@ int main(int argc, char **argv) {
     { uint8_t er[]={0x32,0x04,0x30,0x48,0x60,0x6c}; memcpy(as+p,er,6);p+=6; }
     memcpy(as+p,rsn,sizeof(rsn)); p+=sizeof(rsn);
     for (int i=0;i<8 && !s.got_assoc;i++){ rtl_tx_inject(h,as,p,RTL_RATE_6M,RTL_QSLT_MGNT,rtl_rx_bound_ops()->tx_ep_mgmt); rtl_rx_poll(h,150,cb,&s); }
-    if (!s.got_assoc || s.assoc_status!=0){ printf("Assoc fehlgeschlagen (status %d).\n", s.assoc_status); goto done; }
-    printf("Assoziiert. Warte auf EAPOL msg1 ...\n");
+    if (!s.got_assoc || s.assoc_status!=0){ printf("Assoc failed (status %d).\n", s.assoc_status); goto done; }
+    printf("Associated. Waiting for EAPOL msg1 ...\n");
 
     /* wait for msg1 */
     for (int i=0;i<20 && !s.got_m1;i++) rtl_rx_poll(h,150,cb,&s);
-    if (!s.got_m1){ printf("Keine EAPOL msg1 erhalten (AP hat evtl. deauthed).\n"); goto done; }
-    printf("msg1 empfangen (ANonce). Leite PTK ab ...\n");
+    if (!s.got_m1){ printf("No EAPOL msg1 received (AP may have deauthed).\n"); goto done; }
+    printf("msg1 received (ANonce). Deriving PTK ...\n");
 
     /* SNonce + PTK */
     uint8_t snonce[32];
@@ -261,16 +261,16 @@ int main(int argc, char **argv) {
 
     /* msg2: SNonce + MIC + RSN as key data */
     if (send_eapol(h, 0x010A, s.replay_m1, snonce, rsn, sizeof(rsn), kck) != 0)
-        { printf("msg2-Sendefehler.\n"); goto done; }
-    printf("msg2 gesendet. Warte auf msg3 ...\n");
+        { printf("msg2 send error.\n"); goto done; }
+    printf("msg2 sent. Waiting for msg3 ...\n");
 
     for (int i=0;i<20 && !s.got_m3;i++) rtl_rx_poll(h,150,cb,&s);
-    if (!s.got_m3){ printf("Keine msg3 — Passwort vermutlich falsch (MIC abgelehnt).\n"); goto done; }
-    printf("msg3 empfangen -> Passwort korrekt, PTK stimmt.\n");
+    if (!s.got_m3){ printf("No msg3 — password probably wrong (MIC rejected).\n"); goto done; }
+    printf("msg3 received -> password correct, PTK matches.\n");
 
     /* msg4: confirm */
     send_eapol(h, 0x030A, s.replay_m3, NULL, NULL, 0, kck);
-    printf("msg4 gesendet.\n==> IE3 OK: WPA2-4-Way-Handshake abgeschlossen.\n\n");
+    printf("msg4 sent.\n==> IE3 OK: WPA2 4-way handshake complete.\n\n");
 
     /* --- IE4/IE5 precursor: unwrap GTK + decrypt CCMP live --- */
     const uint8_t *kek = ptk + 16;
@@ -290,20 +290,20 @@ int main(int argc, char **argv) {
                 i += 2 + l;
             }
             if (have) {
-                printf("GTK aus msg3 ausgepackt. Teste CCMP-Entschluesselung live (~12s) ...\n");
+                printf("GTK unwrapped from msg3. Testing CCMP decryption live (~12s) ...\n");
                 for (int t = 0; t < 60 && !g_dec_ok; t++) rtl_rx_poll(h, 200, dec_cb, NULL);
-                printf("  Diagnose: geschuetzte Frames vom AP gesehen=%d, Entschluessel-Fehler=%d\n",
+                printf("  Diagnostics: protected frames seen from AP=%d, decrypt errors=%d\n",
                        g_seen_prot, g_dec_fail);
                 if (g_dec_ok)
-                    printf("\n==> IE4 live bestaetigt: CCMP-Rahmung korrekt, echtes Frame entschluesselt.\n");
+                    printf("\n==> IE4 confirmed live: CCMP framing correct, real frame decrypted.\n");
                 else if (g_seen_prot == 0)
-                    printf("  Keine geschuetzten Frames vom AP empfangen (ruhiges Netz / evtl. deauthed).\n");
+                    printf("  No protected frames received from the AP (quiet network / possibly deauthed).\n");
                 else
-                    printf("  Frames kamen an, aber Entschluesselung schlug fehl -> AAD/Nonce/GTK justieren.\n");
-            } else printf("  Keine GTK-KDE in msg3 gefunden.\n");
-        } else printf("  GTK-Unwrap fehlgeschlagen (KEK/Key-Data).\n");
+                    printf("  Frames arrived, but decryption failed -> adjust AAD/nonce/GTK.\n");
+            } else printf("  No GTK KDE found in msg3.\n");
+        } else printf("  GTK unwrap failed (KEK/key data).\n");
     }
-    printf("\nNaechster Schritt IE5: utun-Bridge + DHCP (Daemon, braucht sudo).\n");
+    printf("\nNext step IE5: utun bridge + DHCP (daemon, needs sudo).\n");
 
 done:
     {   /* leave cleanly: deauth our own association (reason 3) so the next connect starts clean */

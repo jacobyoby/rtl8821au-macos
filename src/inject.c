@@ -37,37 +37,37 @@ int main(int argc, char **argv) {
     };
 
     libusb_context *ctx = NULL;
-    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init fehlgeschlagen\n"); return 1; }
+    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init failed\n"); return 1; }
     libusb_device_handle *h = NULL;
     uint16_t vid = 0, pid = 0; int claimed = 0;
     int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
-    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("Kein bekannter Adapter gefunden.\n"); libusb_exit(ctx); return 2; }
-    if (rc != 0 || !h) { fprintf(stderr, "Oeffnen: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
-    printf("Geraet %04x:%04x, Claim: %s\n\n", vid, pid, claimed ? "OK" : "NEIN");
+    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("No supported adapter found.\n"); libusb_exit(ctx); return 2; }
+    if (rc != 0 || !h) { fprintf(stderr, "Open: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
+    printf("Device %04x:%04x, Claim: %s\n\n", vid, pid, claimed ? "OK" : "NO");
 
-    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
+    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* enable the asynchronous RX path */
 
     rc = rtl_hal_full_init(h, channel, with_cal, 1);
-    if (rc != 0) { printf("Init fehlgeschlagen (rc=%d).\n", rc); goto done; }
+    if (rc != 0) { printf("Init failed (rc=%d).\n", rc); goto done; }
 
     FILE *f = fopen(out, "wb");
     if (!f) { perror("fopen"); rc = 1; goto done; }
     rtl_rx_write_pcap_header(f);
 
-    printf("\nInjiziere %d Broadcast-Probe-Requests auf Kanal %d (cal=%d)%s\n",
-           count, channel, with_cal, with_cal ? "" : " [RX-only-Power, kein IQK]");
+    printf("\nInjecting %d broadcast probe requests on channel %d (cal=%d)%s\n",
+           count, channel, with_cal, with_cal ? "" : " [RX-only power, no IQK]");
 
     long tx_ok = 0, tx_err = 0, resp = 0;
     for (int i = 0; i < count; i++) {
         int r = rtl_tx_inject(h, probe, (int)sizeof(probe), RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt);
-        if (r == 0) tx_ok++; else { tx_err++; if (tx_err <= 3) printf("  TX-Fehler: %s\n", libusb_error_name(r)); }
+        if (r == 0) tx_ok++; else { tx_err++; if (tx_err <= 3) printf("  TX error: %s\n", libusb_error_name(r)); }
         resp += rtl_rx_pump(h, f, 150);   /* listen 150ms after each probe */
     }
     fclose(f);
-    printf("\nErgebnis: TX ok=%ld  TX-Fehler=%ld  empfangene Frames waehrend Test=%ld\n",
+    printf("\nResult: TX ok=%ld  TX errors=%ld  frames received during test=%ld\n",
            tx_ok, tx_err, resp);
-    printf("Probe-Responses zaehlen:  tshark -r %s -Y 'wlan.fc.type_subtype==0x05' 2>/dev/null | wc -l\n", out);
-    printf("                     oder: tcpdump -r %s 2>/dev/null | grep -i 'Probe Response' | wc -l\n", out);
+    printf("Count probe responses: tshark -r %s -Y 'wlan.fc.type_subtype==0x05' 2>/dev/null | wc -l\n", out);
+    printf("                   or: tcpdump -r %s 2>/dev/null | grep -i 'Probe Response' | wc -l\n", out);
 
 done:
     rtl_rx_unbind();

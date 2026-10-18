@@ -12,7 +12,7 @@
 
 #define RND8(x) (((x) + 7) & ~7u)
 
-/* Endpunkte (hier, damit rtl_chip.c nicht rtl_rx.h/rtl_tx.h braucht). */
+/* Endpoints (here, so rtl_chip.c does not need rtl_rx.h/rtl_tx.h). */
 #define RTL_RX_EP_DEFAULT 0x81  /* Bulk-IN  (RX) */
 
 static uint32_t le32(const uint8_t *p) {
@@ -21,9 +21,9 @@ static uint32_t le32(const uint8_t *p) {
 }
 
 /*
- * RX-Deskriptor 88xxA (include/rtl8812a_recv.h; rtw88 rx.h fuer 8821A gleich):
+ * RX descriptor 88xxA (include/rtl8812a_recv.h; rtw88 rx.h, identical for 8821A):
  *   dword0 [13:0] pkt_len, [19:16] drvinfo_size (x8), [25:24] shift
- *   dword2 [28]   rpt_sel (C2H/Report statt 802.11-Frame)
+ *   dword2 [28]   rpt_sel (C2H/report instead of 802.11 frame)
  */
 int rtl88xxa_rx_parse_desc(const uint8_t *p, int avail, rtl_rx_sub *out) {
     if (avail <= 24) return -1;
@@ -42,7 +42,7 @@ int rtl88xxa_rx_parse_desc(const uint8_t *p, int avail, rtl_rx_sub *out) {
     if ((int)total > avail) return -1;
 
     uint32_t adv = RND8(total);
-    if ((int)adv > avail) adv = (uint32_t)avail;  /* letzter Subframe */
+    if ((int)adv > avail) adv = (uint32_t)avail;  /* last subframe */
 
     out->hdr_len   = hdr;
     out->pkt_len   = pkt_len;

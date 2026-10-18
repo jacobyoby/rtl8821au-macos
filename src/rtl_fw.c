@@ -111,7 +111,7 @@ int rtl_fw_download_blob(libusb_device_handle *h, const uint8_t *buf, uint32_t l
 
     if (((sig & 0xFFF0) == 0x9500) || ((sig & 0xFFF0) == 0x2100)) {
         buf += 32; len -= 32;               /* strip the 32-byte header */
-        if (verbose) printf("  Header erkannt -> Nutzlast %u Byte\n", len);
+        if (verbose) printf("  Header detected -> payload %u bytes\n", len);
     }
 
     /* Is the 8051 already running RAM code? If so, reset it first. */
@@ -125,7 +125,7 @@ int rtl_fw_download_blob(libusb_device_handle *h, const uint8_t *buf, uint32_t l
     rtl_write8(h, REG_MCUFWDL, rtl_read8(h, REG_MCUFWDL, NULL) | FWDL_CHKSUM_RPT);
 
     int rc = write_fw(h, buf, len);
-    if (rc) { fwdl_enable(h, 0); if (verbose) printf("  Block-Write FEHLER: %d\n", rc); return rc; }
+    if (rc) { fwdl_enable(h, 0); if (verbose) printf("  Block write ERROR: %d\n", rc); return rc; }
 
     rc = poll_flag32(h, FWDL_CHKSUM_RPT, 1000);
     fwdl_enable(h, 0);
@@ -140,7 +140,7 @@ int rtl_fw_download_blob(libusb_device_handle *h, const uint8_t *buf, uint32_t l
 
     rc = poll_flag32(h, WINTINI_RDY, 2000);
     if (rc) { if (verbose) printf("  WINTINI_RDY TIMEOUT\n"); return 2; }
-    if (verbose) printf("  FW ready (WINTINI_RDY gesetzt)\n");
+    if (verbose) printf("  FW ready (WINTINI_RDY set)\n");
     return 0;
 }
 
@@ -191,6 +191,6 @@ int rtl_fw_set_active_mode(libusb_device_handle *h, int verbose) {
 
     rtl_write32(h, REG_HMEBOX_EXT0, h2c_cmd_ex);
     int rc = rtl_write32(h, REG_HMEBOX_0, h2c_cmd);
-    if (verbose) printf("[fw] H2C_SET_PWR_MODE (Active, kein Power-Save) gesendet (rc=%d)\n", rc);
+    if (verbose) printf("[fw] H2C_SET_PWR_MODE (Active, no power save) sent (rc=%d)\n", rc);
     return rc;
 }

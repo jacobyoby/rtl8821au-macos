@@ -58,8 +58,7 @@ and test each stage with `stagetest`.
   functions directly.
 - Generated files (`rtl8821au_tables.c`, `fw_8821a_nic.c`, the limit rows)
   are regenerated from upstream sources, not edited by hand.
-- Write new comments in English. Many upstream comments are in German; leave
-  them unless you are changing that code.
+- Write comments and messages in English.
 - Never log key material or passwords. Nonces and frames are fine in verbose
   output.
 

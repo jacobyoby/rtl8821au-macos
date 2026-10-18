@@ -41,10 +41,10 @@ int rtl_pwr_seq_run(libusb_device_handle *h, const rtl_pwr_step *seq, int verbos
 
         if (s->cmd == RTL_PWR_WRITE) {
             uint8_t v = rtl_read8(h, s->offset, &rc);
-            if (rc != 0) { if (verbose) printf("  [%d] READ 0x%04x FEHLER\n", i, s->offset); return rc; }
+            if (rc != 0) { if (verbose) printf("  [%d] READ 0x%04x ERROR\n", i, s->offset); return rc; }
             v = (uint8_t)((v & ~s->mask) | (s->value & s->mask));
             rc = rtl_write8(h, s->offset, v);
-            if (rc != 0) { if (verbose) printf("  [%d] WRITE 0x%04x FEHLER\n", i, s->offset); return rc; }
+            if (rc != 0) { if (verbose) printf("  [%d] WRITE 0x%04x ERROR\n", i, s->offset); return rc; }
             if (verbose) printf("  [%d] WRITE   0x%04x mask=0x%02x val=0x%02x  (%s)\n",
                                 i, s->offset, s->mask, s->value, s->note ? s->note : "");
 
@@ -53,13 +53,13 @@ int rtl_pwr_seq_run(libusb_device_handle *h, const rtl_pwr_step *seq, int verbos
             uint8_t v = 0;
             for (int t = 0; t < POLL_TRIES; t++) {
                 v = rtl_read8(h, s->offset, &rc);
-                if (rc != 0) { if (verbose) printf("  [%d] POLL READ FEHLER\n", i); return rc; }
+                if (rc != 0) { if (verbose) printf("  [%d] POLL READ ERROR\n", i); return rc; }
                 if ((v & s->mask) == (s->value & s->mask)) { ok = 1; break; }
                 usleep(POLL_DELAY_US);
             }
             if (!ok) {
-                if (verbose) printf("  [%d] POLLING 0x%04x mask=0x%02x erwartet=0x%02x "
-                                    "letzter=0x%02x  TIMEOUT  (%s)\n",
+                if (verbose) printf("  [%d] POLLING 0x%04x mask=0x%02x expected=0x%02x "
+                                    "last=0x%02x  TIMEOUT  (%s)\n",
                                     i, s->offset, s->mask, s->value, v & s->mask,
                                     s->note ? s->note : "");
                 return i + 1; /* >0: number of the failed step */

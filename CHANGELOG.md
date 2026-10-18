@@ -20,6 +20,8 @@ All notable changes to this fork are listed here. The format follows
   tracing in `rtl_wpa`, beacon TIM and keepalive in `alfa-netd`.
 - `make check` for the hardware-free self-tests, and a GitHub Actions build.
 - Documentation in `docs/`.
+- Comments and program output translated from German to English, except
+  `src/deauth.c`.
 
 ### Changed
 

@@ -35,19 +35,19 @@ int main(void) {
     if (libusb_init(&ctx) != 0) return 1;
     libusb_device_handle *h = NULL; uint16_t vid = 0, pid = 0; int claimed = 0;
     int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
-    if (rc || !h) { printf("Kein Geraet.\n"); libusb_exit(ctx); return 2; }
+    if (rc || !h) { printf("No device.\n"); libusb_exit(ctx); return 2; }
 
-    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
+    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* enable the asynchronous RX path */
 
-    if (rtl_hal_full_init(h, 6, 0, 0) != 0) { printf("Init fehlgeschlagen.\n"); goto done; }
-    printf("Init OK. Achte jetzt auf die LED.\n\n");
+    if (rtl_hal_full_init(h, 6, 0, 0) != 0) { printf("Init failed.\n"); goto done; }
+    printf("Init OK. Watch the LED now.\n\n");
 
-    printf(">>> Phase A: REG_LEDCFG2 (0x4E) — blinkt 6x ...\n"); fflush(stdout);
+    printf(">>> Phase A: REG_LEDCFG2 (0x4E) — blinks 6x ...\n"); fflush(stdout);
     blink(h, LEDCFG2, 1);
     sleep(1);
-    printf(">>> Phase B: REG_LEDCFG0 (0x4C) — blinkt 6x ...\n"); fflush(stdout);
+    printf(">>> Phase B: REG_LEDCFG0 (0x4C) — blinks 6x ...\n"); fflush(stdout);
     blink(h, LEDCFG0, 0);
-    printf("\nFertig. In welcher Phase hat die LED geblinkt (A, B, beide, keine)?\n");
+    printf("\nDone. In which phase did the LED blink (A, B, both, neither)?\n");
 
 done:
     rtl_rx_unbind();

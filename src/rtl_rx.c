@@ -1,13 +1,13 @@
 /*
- * rtl_rx — Empfangspfad mit asynchronen libusb-Transfers.
+ * rtl_rx — receive path using asynchronous libusb transfers.
  *
- * Es liegen permanent RTL_RX_URBS Transfers beim Host-Controller. Der Chip
- * findet dadurch IMMER einen freien Puffer vor -- auch waehrend wir parsen
- * oder in die pcap-Datei schreiben. Der alte synchrone Pfad hatte genau in
- * diesem Fenster keinen Puffer offen und verlor auf vollen Kanaelen Frames.
+ * RTL_RX_URBS transfers are permanently queued at the host controller, so the
+ * chip ALWAYS finds a free buffer -- even while we parse or write to the pcap
+ * file. The old synchronous path had no buffer open in exactly that window
+ * and lost frames on busy channels.
  *
- * Alle vier oeffentlichen Leser teilen sich jetzt einen Parser und eine
- * Engine; die Deskriptor-Zerlegung kommt aus rtl_chip_ops.
+ * All four public readers now share one parser and one engine; descriptor
+ * parsing comes from rtl_chip_ops.
  */
 #include "rtl_rx.h"
 #include "rtl_usb.h"
@@ -17,7 +17,7 @@
 #include <stdint.h>
 
 /* ------------------------------------------------------------------ */
-/* Bindung an Kontext + Chip                                          */
+/* Binding to context + chip                                          */
 /* ------------------------------------------------------------------ */
 
 static libusb_context      *g_ctx = NULL;
@@ -34,7 +34,7 @@ static const rtl_chip_ops *ops_or_default(void) {
 const rtl_chip_ops *rtl_rx_bound_ops(void) { return ops_or_default(); }
 
 /* ------------------------------------------------------------------ */
-/* LED (nur aus dem Hauptthread, NIE aus einem libusb-Callback)        */
+/* LED (main thread only, NEVER from a libusb callback)              */
 /* ------------------------------------------------------------------ */
 
 static void led_activity(libusb_device_handle *h) {
@@ -51,7 +51,7 @@ static void led_activity(libusb_device_handle *h) {
 }
 
 /* ------------------------------------------------------------------ */
-/* pcap-Ausgabe                                                        */
+/* pcap output                                                         */
 /* ------------------------------------------------------------------ */
 
 void rtl_rx_write_pcap_header(FILE *f) {
@@ -81,14 +81,14 @@ static void pcap_cb(const uint8_t *frame, uint32_t len, void *v) {
     fwrite(rtap, sizeof(rtap), 1, s->f);
     fwrite(frame, 1, len, s->f);
 
-    /* Live-Senke (extcap-FIFO): sofort rausschreiben, sonst sieht Wireshark
-     * nichts und das Schliessen des FIFO faellt uns nie als Fehler auf. */
+    /* Live sink (extcap FIFO): flush immediately, otherwise Wireshark sees
+     * nothing and we never notice the FIFO being closed as an error. */
     if (s->live) fflush(s->f);
     if (ferror(s->f)) s->broken = 1;
 }
 
 /* ------------------------------------------------------------------ */
-/* Ein Parser fuer alle                                                */
+/* One parser for all                                                  */
 /* ------------------------------------------------------------------ */
 
 static long parse_bulk(const rtl_chip_ops *ops, const uint8_t *buf, int total,
@@ -112,7 +112,7 @@ static long parse_bulk(const rtl_chip_ops *ops, const uint8_t *buf, int total,
 }
 
 /* ------------------------------------------------------------------ */
-/* Asynchrone Engine                                                   */
+/* Asynchronous engine                                                 */
 /* ------------------------------------------------------------------ */
 
 #define RX_BUF_SIZE 32768
@@ -145,15 +145,15 @@ static void LIBUSB_CALL xfer_done(struct libusb_transfer *t) {
 
     switch (t->status) {
     case LIBUSB_TRANSFER_COMPLETED:
-        /* cb==NULL: Engine laeuft zwischen zwei Poll-Aufrufen weiter (URBs
-         * bleiben offen), aber der ctx des letzten Aufrufers ist tot --
-         * Daten verwerfen statt in einen Stack-Zeiger zu schreiben. */
+        /* cb==NULL: the engine keeps running between two poll calls (URBs
+         * stay open), but the last caller's ctx is dead -- discard the data
+         * instead of writing through a stack pointer. */
         if (e->cb && e->st && t->actual_length > (int)e->ops->rxdesc_size) {
             e->st->xfers++;
             e->st->bytes  += t->actual_length;
             e->st->frames += parse_bulk(e->ops, t->buffer, t->actual_length,
                                         e->cb, e->cbctx);
-            e->activity = 1;   /* LED macht der Hauptthread -- kein Sync-I/O hier */
+            e->activity = 1;   /* the main thread drives the LED -- no sync I/O here */
         }
         break;
 
@@ -185,7 +185,7 @@ static int engine_start(rx_engine *e, libusb_device_handle *h,
         e->buf[i]  = malloc(RX_BUF_SIZE);
         e->xfer[i] = libusb_alloc_transfer(0);
         if (!e->buf[i] || !e->xfer[i]) { engine_free(e); return -1; }
-        /* timeout 0 = unbegrenzt: kein Timeout-Leerlauf auf ruhigen Kanaelen. */
+        /* timeout 0 = unlimited: no timeout churn on quiet channels. */
         libusb_fill_bulk_transfer(e->xfer[i], h, ops->rx_ep,
                                   e->buf[i], RX_BUF_SIZE, xfer_done, e, 0);
     }
@@ -208,12 +208,12 @@ static void engine_stop(rx_engine *e) {
     engine_free(e);
 }
 
-/* ms < 0 = endlos. abort darf NULL sein. */
+/* ms < 0 = forever. abort may be NULL. */
 static void engine_run(rx_engine *e, int ms, const volatile int *abort) {
     struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
     for (;;) {
-        /* Wartefenster nie groesser als die Restlaufzeit: sonst dauert ein
-         * rtl_rx_poll(h,20,..) immer >=50ms (alfa-netd-Bridge-Latenz). */
+        /* Never wait longer than the remaining time: otherwise an
+         * rtl_rx_poll(h,20,..) always takes >=50ms (alfa-netd bridge latency). */
         long slice_us = 50000;
         if (ms >= 0) {
             struct timespec tn; clock_gettime(CLOCK_MONOTONIC, &tn);
@@ -233,7 +233,7 @@ static void engine_run(rx_engine *e, int ms, const volatile int *abort) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Synchroner Fallback (falls rtl_rx_bind nie aufgerufen wurde)        */
+/* Synchronous fallback (if rtl_rx_bind was never called)              */
 /* ------------------------------------------------------------------ */
 
 static void sync_run(libusb_device_handle *h, const rtl_chip_ops *ops, int ms,
@@ -265,13 +265,13 @@ static void sync_run(libusb_device_handle *h, const rtl_chip_ops *ops, int ms,
 }
 
 /* ------------------------------------------------------------------ */
-/* Persistente Engine: einmal starten, ueber alle Aufrufe offen halten */
+/* Persistent engine: start once, keep open across all calls          */
 /* ------------------------------------------------------------------ */
 
 static rx_engine g_eng;
 static int       g_eng_live = 0;
 
-/* Gemeinsamer Einstieg: waehlt async wenn gebunden, sonst sync. */
+/* Common entry point: picks async if bound, otherwise sync. */
 static void rx_run(libusb_device_handle *h, int ms, rtl_frame_cb cb, void *ctx,
                    const volatile int *abort, rx_stats *st) {
     const rtl_chip_ops *ops = ops_or_default();
@@ -284,7 +284,7 @@ static void rx_run(libusb_device_handle *h, int ms, rtl_frame_cb cb, void *ctx,
         }
         g_eng_live = 1;
     } else {
-        /* URBs bleiben in flight -- nur Senke und Zaehler umhaengen. */
+        /* URBs stay in flight -- only swap the sink and counters. */
         g_eng.h = h; g_eng.ops = ops;
         g_eng.cb = cb; g_eng.cbctx = ctx; g_eng.st = st;
     }
@@ -301,7 +301,7 @@ void rtl_rx_unbind(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Oeffentliche API                                                    */
+/* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
 long rtl_rx_poll(libusb_device_handle *h, int ms, rtl_frame_cb cb, void *ctx) {
@@ -318,7 +318,7 @@ long rtl_rx_pump(libusb_device_handle *h, FILE *f, int ms) {
 }
 
 long rtl_rx_stream(libusb_device_handle *h, FILE *f) {
-    pcap_sink s = { f, 0, 1 };      /* live=1: FIFO sofort flushen */
+    pcap_sink s = { f, 0, 1 };      /* live=1: flush the FIFO immediately */
     rx_stats st = {0};
     rx_run(h, -1, pcap_cb, &s, &s.broken, &st);
     return st.frames;
@@ -332,13 +332,13 @@ long rtl_rx_capture(libusb_device_handle *h, FILE *f, int seconds, int verbose) 
     fflush(f);
 
     if (verbose) {
-        printf("\n  DIAGNOSE: Transfers=%ld  Bytes=%ld  Frames=%ld  Timeouts=%ld\n",
+        printf("\n  DIAGNOSTICS: Transfers=%ld  Bytes=%ld  Frames=%ld  Timeouts=%ld\n",
                st.xfers, st.bytes, st.frames, st.timeouts);
-        printf("  Pfad: %s (%d URBs in flight)\n",
-               g_ctx ? "asynchron" : "synchron (rtl_rx_bind fehlt)",
+        printf("  Path: %s (%d URBs in flight)\n",
+               g_ctx ? "asynchronous" : "synchronous (rtl_rx_bind missing)",
                g_ctx ? RTL_RX_URBS : 1);
         if (st.xfers == 0)
-            printf("  KEINE rohen Bytes vom Chip empfangen (%#04x liefert nichts).\n",
+            printf("  NO raw bytes received from the chip (%#04x returns nothing).\n",
                    ops_or_default()->rx_ep);
     }
     return st.frames;

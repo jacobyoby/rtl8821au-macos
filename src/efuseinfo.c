@@ -9,35 +9,35 @@
 
 int main(void) {
     libusb_context *ctx = NULL;
-    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init fehlgeschlagen\n"); return 1; }
+    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init failed\n"); return 1; }
 
     libusb_device_handle *h = NULL;
     uint16_t vid = 0, pid = 0; int claimed = 0;
     int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
-    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("Kein bekannter Adapter gefunden. Adapter einstecken.\n"); libusb_exit(ctx); return 2; }
-    if (rc != 0 || !h) { fprintf(stderr, "Oeffnen fehlgeschlagen: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
-    printf("Geraet %04x:%04x, Claim: %s\n", vid, pid, claimed ? "OK" : "NICHT");
+    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("No supported adapter found. Plug in the adapter.\n"); libusb_exit(ctx); return 2; }
+    if (rc != 0 || !h) { fprintf(stderr, "Open failed: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
+    printf("Device %04x:%04x, Claim: %s\n", vid, pid, claimed ? "OK" : "NOT");
 
     int pr = rtl_power_on(h, 0);
-    printf("Power-On: %s\n", pr == 0 ? "OK" : "fehlgeschlagen");
+    printf("Power-On: %s\n", pr == 0 ? "OK" : "failed");
 
     static uint8_t map[EFUSE_MAP_LEN];
     rc = rtl_efuse_read_map(h, map, EFUSE_MAP_LEN);
     if (rc != 0) {
-        printf("efuse-Read FEHLER: %s\n", libusb_error_name(rc));
+        printf("efuse read ERROR: %s\n", libusb_error_name(rc));
     } else {
         const uint8_t *m = &map[EFUSE_MAC_OFFSET];
-        printf("\nefuse-MAC (0x%02X) = %02x:%02x:%02x:%02x:%02x:%02x\n",
+        printf("\nefuse MAC (0x%02X) = %02x:%02x:%02x:%02x:%02x:%02x\n",
                EFUSE_MAC_OFFSET, m[0], m[1], m[2], m[3], m[4], m[5]);
 
         int all_ff = 1, all_00 = 1;
         for (int i = 0; i < 6; i++) { if (m[i] != 0xFF) all_ff = 0; if (m[i] != 0x00) all_00 = 0; }
         if (all_ff || all_00)
-            printf("  ! unplausibel — efuse evtl. nicht bestromt; ggf. efuse-PowerSwitch noetig.\n");
+            printf("  ! implausible — efuse may not be powered; efuse power switch may be needed.\n");
         else
-            printf("  plausible Hersteller-MAC gelesen.\n");
+            printf("  plausible vendor MAC read.\n");
 
-        printf("\nefuse-Kopf (0x00..0x1F):\n  ");
+        printf("\nefuse header (0x00..0x1F):\n  ");
         for (int i = 0; i < 32; i++) { printf("%02x ", map[i]); if (i % 16 == 15) printf("\n  "); }
         printf("\n");
 
@@ -47,17 +47,17 @@ int main(void) {
          * rtl_rf.c), we transmit through the chip's own weak internal driver
          * stage only, never through the external PA this adapter is built
          * around. PAType bit4+bit5 both set = external PA present (2G). */
-        printf("\nThermal-Meter-Kalibrierwert (0xBA):\n  %02x", map[0xBA]);
-        if (map[0xBA] == 0xFF) printf("  (unprogrammiert -- auch der echte Treiber ueberspringt Thermal-Tracking dann)");
+        printf("\nThermal meter calibration value (0xBA):\n  %02x", map[0xBA]);
+        if (map[0xBA] == 0xFF) printf("  (unprogrammed -- the real driver also skips thermal tracking in that case)");
         printf("\n");
 
-        printf("\nPA/LNA-Typ (0xBC..0xC1):\n  ");
+        printf("\nPA/LNA type (0xBC..0xC1):\n  ");
         for (int i = 0xBC; i <= 0xC1; i++) printf("%02x ", map[i]);
         printf("\n");
         uint8_t pa_type_2g = map[0xBC];
         int ext_pa_2g = (pa_type_2g != 0xFF) && (pa_type_2g & 0x30) == 0x30;
-        printf("  PAType_2G=0x%02x -> externer PA (2.4GHz): %s\n",
-               pa_type_2g, ext_pa_2g ? "JA" : "nein (laut Efuse)");
+        printf("  PAType_2G=0x%02x -> external PA (2.4GHz): %s\n",
+               pa_type_2g, ext_pa_2g ? "YES" : "no (per efuse)");
 
         /* RFE (RF Front-End) option (hal_pg.h EEPROM_RFE_OPTION_8812=0xCA):
          * selects which phy_SetRFEReg8812 pinmux case applies -- i.e. whether
@@ -65,9 +65,9 @@ int main(void) {
          * PA/LNA at all. Our code hardcodes rfe_type=0 with a comment
          * claiming that's the AWUS036ACH default -- checking that here too. */
         uint8_t rfe_option = map[0xCA];
-        printf("  RFE-Option (0xCA) = 0x%02x -> rfe_type = %u %s\n",
+        printf("  RFE option (0xCA) = 0x%02x -> rfe_type = %u %s\n",
                rfe_option, (unsigned)(rfe_option & 0x3F),
-               rfe_option == 0xFF ? "(unprogrammiert/Default)" : "");
+               rfe_option == 0xFF ? "(unprogrammed/default)" : "");
     }
 
     if (claimed) libusb_release_interface(h, 0);

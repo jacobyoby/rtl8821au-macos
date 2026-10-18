@@ -9,24 +9,24 @@
 #define RTL_RX_EP        0x81
 #define RTL_RXDESC_SIZE  24
 
-/* Anzahl gleichzeitig beim Host-Controller liegender URBs. */
+/* Number of URBs queued at the host controller simultaneously. */
 #define RTL_RX_URBS      8
 
 /*
- * MUSS einmal nach libusb_init()/rtl_open_first() aufgerufen werden, um den
- * asynchronen RX-Pfad zu aktivieren. ops darf NULL sein (-> rtl_chip_default).
- * Ohne diesen Aufruf faellt rtl_rx transparent auf den alten synchronen Pfad
- * zurueck -- nichts bricht, es ist nur langsamer.
+ * MUST be called once after libusb_init()/rtl_open_first() to enable the
+ * asynchronous RX path. ops may be NULL (-> rtl_chip_default).
+ * Without this call rtl_rx transparently falls back to the old synchronous
+ * path -- nothing breaks, it is just slower.
  */
 void rtl_rx_bind(libusb_context *ctx, const rtl_chip_ops *ops);
 
-/* Die gebundene ops-Tabelle (oder rtl_chip_default()). Tools nehmen daraus
- * z.B. tx_ep_mgmt statt des 8812AU-Makros RTL_TX_EP_MGMT. */
+/* The bound ops table (or rtl_chip_default()). Tools take e.g. tx_ep_mgmt
+ * from it instead of the 8812AU macro RTL_TX_EP_MGMT. */
 const rtl_chip_ops *rtl_rx_bound_ops(void);
 
-/* MUSS vor libusb_release_interface()/libusb_close() aufgerufen werden:
- * stoppt die persistente Engine und wartet, bis alle URBs zurueck sind.
- * Ohne das laufen beim Schliessen noch Transfers auf das Handle. */
+/* MUST be called before libusb_release_interface()/libusb_close():
+ * stops the persistent engine and waits until all URBs are back.
+ * Without it, transfers are still running on the handle when it is closed. */
 void rtl_rx_unbind(void);
 
 void rtl_rx_write_pcap_header(FILE *f);

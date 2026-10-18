@@ -103,6 +103,8 @@ frames capable (CCMP, PSK and SAE). Each of these cost a debugging round:
    then HT/VHT TX.
 5. **Clean up output.** Strip the handshake hex dumps from `rtl_wpa.c` once
    the data path is stable. They print nonces and frames, never the password.
+6. **`src/deauth.c`** still has German comments and messages; the rest of
+   the tree is English.
 
 ## Porting a new chip
 

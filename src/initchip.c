@@ -18,34 +18,34 @@
 
 int main(void) {
     libusb_context *ctx = NULL;
-    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init fehlgeschlagen\n"); return 1; }
+    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init failed\n"); return 1; }
 
     libusb_device_handle *h = NULL;
     uint16_t vid = 0, pid = 0; int claimed = 0;
     int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
-    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("Kein bekannter Adapter gefunden. Adapter einstecken.\n"); libusb_exit(ctx); return 2; }
-    if (rc != 0 || !h) { fprintf(stderr, "Oeffnen fehlgeschlagen: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
+    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("No supported adapter found. Plug in the adapter.\n"); libusb_exit(ctx); return 2; }
+    if (rc != 0 || !h) { fprintf(stderr, "Open failed: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
 
     const rtl_chip_ops *o = rtl_chip_probe(vid, pid);
-    printf("Geraet %04x:%04x geoeffnet (%s), Claim: %s\n\n", vid, pid, o->name, claimed ? "OK" : "NICHT");
+    printf("Device %04x:%04x opened (%s), Claim: %s\n\n", vid, pid, o->name, claimed ? "OK" : "NOT");
 
     int r = 0;
     uint32_t sys = rtl_read32(h, REG_SYS_CFG, &r);
-    printf("vor Power-On:  SYS_CFG=0x%08x (rc=%d)\n", sys, r);
+    printf("before power-on: SYS_CFG=0x%08x (rc=%d)\n", sys, r);
 
-    printf("\nPower-On-Sequenz (%s):\n", o->name);
+    printf("\nPower-on sequence (%s):\n", o->name);
     int pr = o->power_on(h, 1);
 
-    if (pr == 0)      printf("\n==> Power-On ERFOLGREICH. Chip ist aktiv.\n");
-    else if (pr > 0)  printf("\n==> Power-On haengt bei POLLING-Schritt %d (State-Machine).\n", pr);
-    else              printf("\n==> Power-On USB-Fehler: %s\n", libusb_error_name(pr));
+    if (pr == 0)      printf("\n==> Power-on SUCCESSFUL. Chip is active.\n");
+    else if (pr > 0)  printf("\n==> Power-on stuck at POLLING step %d (state machine).\n", pr);
+    else              printf("\n==> Power-on USB error: %s\n", libusb_error_name(pr));
 
     sys = rtl_read32(h, REG_SYS_CFG, &r);
-    printf("nach Power-On: SYS_CFG=0x%08x (rc=%d)\n", sys, r);
+    printf("after power-on:  SYS_CFG=0x%08x (rc=%d)\n", sys, r);
 
     uint8_t mac[6] = {0};
     if (rtl_reg_read(h, REG_MACID, mac, 6) == 0)
-        printf("MAC (0x0610) nach Power-On = %02x:%02x:%02x:%02x:%02x:%02x\n",
+        printf("MAC (0x0610) after power-on = %02x:%02x:%02x:%02x:%02x:%02x\n",
                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
     if (claimed) libusb_release_interface(h, 0);

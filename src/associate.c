@@ -53,9 +53,9 @@ static void cb(const uint8_t *f, uint32_t len, void *v) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 4) { printf("Nutzung: %s <kanal> <bssid> <ssid>\n", argv[0]); return 1; }
+    if (argc < 4) { printf("Usage: %s <channel> <bssid> <ssid>\n", argv[0]); return 1; }
     int channel = atoi(argv[1]);
-    if (!parse_mac(argv[2], g_bssid)) { printf("BSSID ungueltig\n"); return 1; }
+    if (!parse_mac(argv[2], g_bssid)) { printf("Invalid BSSID\n"); return 1; }
     const char *ssid = argv[3];
     int slen = (int)strlen(ssid); if (slen > 32) slen = 32;
 
@@ -63,13 +63,13 @@ int main(int argc, char **argv) {
     if (libusb_init(&ctx) != 0) return 1;
     libusb_device_handle *h = NULL; uint16_t vid = 0, pid = 0; int claimed = 0;
     int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
-    if (rc || !h) { printf("Kein Geraet.\n"); libusb_exit(ctx); return 2; }
+    if (rc || !h) { printf("No device.\n"); libusb_exit(ctx); return 2; }
 
-    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
+    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* enable the asynchronous RX path */
 
     int cal = (argc > 4) ? atoi(argv[4]) : 0;        /* 1 = run IQK like rtl_wpa_connect */
     int st  = (argc > 5) ? atoi(argv[5]) : 0;        /* bit0: station RCR, bit1: MSR+REG_BSSID (rtl_wpa setup) */
-    if (rtl_hal_full_init(h, channel, cal, 0) != 0) { printf("Init fehlgeschlagen.\n"); goto done; }
+    if (rtl_hal_full_init(h, channel, cal, 0) != 0) { printf("Init failed.\n"); goto done; }
 
     /* Our own MAC into the MACID register -> hardware auto-ACK for responses to us. */
     rtl_reg_write(h, REG_MACID, g_sa, 6);
@@ -95,13 +95,13 @@ int main(int argc, char **argv) {
     auth[24]=0x00; auth[25]=0x00;           /* algo = open */
     auth[26]=0x01; auth[27]=0x00;           /* transaction seq = 1 */
     auth[28]=0x00; auth[29]=0x00;           /* status */
-    printf("Sende Authentication (Open) an %s ...\n", argv[2]);
+    printf("Sending Authentication (Open) to %s ...\n", argv[2]);
     for (int i = 0; i < 8 && c.auth_status < 0; i++) {
         rtl_tx_inject(h, auth, sizeof(auth), RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt);
         rtl_rx_poll(h, 200, cb, &c);
     }
-    if (c.auth_status < 0) { printf("Keine Auth-Response erhalten.\n"); goto done; }
-    printf("Auth-Response: Status %d (%s)\n", c.auth_status, c.auth_status==0?"OK":"abgelehnt");
+    if (c.auth_status < 0) { printf("No Auth Response received.\n"); goto done; }
+    printf("Auth-Response: Status %d (%s)\n", c.auth_status, c.auth_status==0?"OK":"rejected");
     if (c.auth_status != 0) goto done;
 
     /* --- Association Request --- */
@@ -119,16 +119,16 @@ int main(int argc, char **argv) {
     { uint8_t rsn[]={0x30,0x14, 0x01,0x00, 0x00,0x0f,0xac,0x04,
                      0x01,0x00, 0x00,0x0f,0xac,0x04, 0x01,0x00, 0x00,0x0f,0xac,0x02, 0x00,0x00};
       memcpy(assoc+p,rsn,sizeof(rsn)); p+=sizeof(rsn); }
-    printf("Sende Association Request (SSID \"%s\") ...\n", ssid);
+    printf("Sending Association Request (SSID \"%s\") ...\n", ssid);
     for (int i = 0; i < 8 && c.assoc_status < 0; i++) {
         rtl_tx_inject(h, assoc, p, RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt);
         rtl_rx_poll(h, 200, cb, &c);
     }
-    if (c.assoc_status < 0) { printf("Keine Assoc-Response erhalten.\n"); goto done; }
+    if (c.assoc_status < 0) { printf("No Assoc Response received.\n"); goto done; }
     printf("Assoc-Response: Status %d (%s), AID=%d\n",
-           c.assoc_status, c.assoc_status==0?"ASSOZIIERT":"abgelehnt", c.aid);
+           c.assoc_status, c.assoc_status==0?"ASSOCIATED":"rejected", c.aid);
     if (c.assoc_status == 0)
-        printf("\n==> IE2 OK: mit dem AP assoziiert. Naechster Schritt: WPA2-Handshake (IE3).\n");
+        printf("\n==> IE2 OK: associated with the AP. Next step: WPA2 handshake (IE3).\n");
     if ((st & 8) && c.assoc_status == 0) {
         int tep  = (argc > 6) ? (int)strtoul(argv[6], NULL, 16) : rtl_rx_bound_ops()->tx_ep_mgmt;
         int tqs  = (argc > 7) ? (int)strtoul(argv[7], NULL, 16) : RTL_QSLT_VO;

@@ -50,7 +50,7 @@ static void print_string(libusb_device_handle *h, uint8_t idx, const char *label
 static void dump_config(libusb_device *dev) {
     struct libusb_config_descriptor *cfg;
     if (libusb_get_active_config_descriptor(dev, &cfg) != 0) {
-        printf("  (keine aktive Konfiguration lesbar)\n");
+        printf("  (no active configuration readable)\n");
         return;
     }
     printf("  Interfaces:    %d\n", cfg->bNumInterfaces);
@@ -101,44 +101,44 @@ int main(void) {
         if (!id && d.idVendor != REALTEK_VID) continue;
 
         found++;
-        printf("\n=== Geraet %04x:%04x  (bus %d, addr %d)  ",
+        printf("\n=== Device %04x:%04x  (bus %d, addr %d)  ",
                d.idVendor, d.idProduct,
                libusb_get_bus_number(dev), libusb_get_device_address(dev));
         if (id) printf("[%s: %s] ===\n", rtl_chip_id_name(id->chip), id->note);
-        else    printf("[Realtek-VID, PID nicht in rtl_ids.c] ===\n");
+        else    printf("[Realtek VID, PID not in rtl_ids.c] ===\n");
         printf("  Speed:         %s\n", speed_name(libusb_get_device_speed(dev)));
 
         libusb_device_handle *h = NULL;
         rc = libusb_open(dev, &h);
         if (rc != 0) {
-            printf("  open: %s (evtl. haelt macOS das Interface — Rechte/Claim)\n",
+            printf("  open: %s (macOS may be holding the interface — permissions/claim)\n",
                    libusb_error_name(rc));
             dump_config(dev);
             continue;
         }
 
-        print_string(h, d.iManufacturer, "Hersteller:");
-        print_string(h, d.iProduct,      "Produkt:");
-        print_string(h, d.iSerialNumber, "Seriennr.:");
+        print_string(h, d.iManufacturer, "Manufacturer:");
+        print_string(h, d.iProduct,      "Product:");
+        print_string(h, d.iSerialNumber, "Serial no.:");
         dump_config(dev);
 
         /* Claim attempt on interface 0 — reserves the device for userspace. */
         rc = libusb_claim_interface(h, 0);
         if (rc == 0) {
-            printf("  claim if0:     OK — Userspace hat das Geraet.\n");
+            printf("  claim if0:     OK — userspace owns the device.\n");
             libusb_release_interface(h, 0);
         } else {
-            printf("  claim if0:     FEHLER: %s\n", libusb_error_name(rc));
-            printf("                 (macOS haelt das Interface evtl. ueber einen\n");
-            printf("                  Composite-Klassentreiber; naechster Schritt:\n");
-            printf("                  IOKit-Detach / Kernel-Auto-Detach probieren.)\n");
+            printf("  claim if0:     ERROR: %s\n", libusb_error_name(rc));
+            printf("                 (macOS may be holding the interface via a\n");
+            printf("                  composite class driver; next step:\n");
+            printf("                  try IOKit detach / kernel auto-detach.)\n");
         }
         libusb_close(h);
     }
 
     if (!found) {
-        printf("Kein bekannter Adapter (rtl_ids.c) und kein Realtek-Geraet (VID 0x0bda) am USB gefunden.\n");
-        printf("Adapter einstecken und erneut ausfuehren. Gegenprobe:\n");
+        printf("No supported adapter (rtl_ids.c) and no Realtek device (VID 0x0bda) found on USB.\n");
+        printf("Plug in the adapter and run again. Cross-check:\n");
         printf("  ioreg -p IOUSB -w0 | grep -i wlan\n");
     }
 

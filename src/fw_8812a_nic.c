@@ -1,4 +1,4 @@
-/* Firmware fuer RTL8812AU (NIC), portiert aus
+/* Firmware for RTL8812AU (NIC), ported from
  * aircrack-ng/rtl8812au: hal/rtl8812a/hal8812a_fw.c (GPLv2, (c) Realtek). */
 #include <stdint.h>
 typedef unsigned char u8;

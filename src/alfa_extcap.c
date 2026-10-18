@@ -1,18 +1,18 @@
 /*
- * alfa-extcap — Wireshark extcap-Anbindung fuer den Alfa AWUS036ACH.
+ * alfa-extcap — Wireshark extcap integration for the Alfa AWUS036ACH.
  *
- * Damit erscheint der Adapter direkt in Wiresharks Interface-Liste. Wireshark
- * ruft dieses Programm mit dem extcap-Protokoll auf:
- *   --extcap-interfaces                -> Interfaces auflisten
+ * This makes the adapter appear directly in Wireshark's interface list.
+ * Wireshark calls this program using the extcap protocol:
+ *   --extcap-interfaces                -> list interfaces
  *   --extcap-dlts     --extcap-interface alfa0
  *   --extcap-config   --extcap-interface alfa0
- *   --capture --extcap-interface alfa0 --fifo <pfad> [--channel N]
+ *   --capture --extcap-interface alfa0 --fifo <path> [--channel N]
  *
- * Installation: Binary in Wiresharks extcap-Verzeichnis kopieren, z.B.
- *   ~/.config/wireshark/extcap/   oder  /opt/homebrew/lib/wireshark/extcap/
+ * Installation: copy the binary into Wireshark's extcap directory, e.g.
+ *   ~/.config/wireshark/extcap/   or  /opt/homebrew/lib/wireshark/extcap/
  *
- * Bei --capture: volle Inbetriebnahme (RX-only, sicher) + Endlos-Capture in den
- * FIFO, bis Wireshark stoppt.
+ * With --capture: full bring-up (RX-only, safe) + continuous capture into the
+ * FIFO until Wireshark stops.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,7 +44,7 @@ static void print_dlts(void) {
     printf("dlt {number=127}{name=IEEE802_11_RADIOTAP}{display=802.11 plus radiotap header}\n");
 }
 static void print_config(void) {
-    printf("arg {number=0}{call=--channel}{display=Kanal}{tooltip=WLAN-Kanal}{type=selector}{default=6}\n");
+    printf("arg {number=0}{call=--channel}{display=Channel}{tooltip=Wi-Fi channel}{type=selector}{default=6}\n");
     for (size_t i = 0; i < sizeof(chans_24)/sizeof(int); i++)
         printf("value {arg=0}{value=%d}{display=%d (2.4 GHz)}\n", chans_24[i], chans_24[i]);
     for (size_t i = 0; i < sizeof(chans_5g)/sizeof(int); i++)
@@ -52,18 +52,18 @@ static void print_config(void) {
 }
 
 static int do_capture(const char *fifo, int channel) {
-    signal(SIGPIPE, SIG_IGN);   /* FIFO-Schliessen als Schreibfehler, nicht Kill */
+    signal(SIGPIPE, SIG_IGN);   /* FIFO close shows up as a write error, not a kill */
 
     libusb_context *ctx = NULL;
     if (libusb_init(&ctx) != 0) return 1;
     libusb_device_handle *h = NULL; uint16_t vid = 0, pid = 0; int claimed = 0;
     int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
-    if (rc || !h) { fprintf(stderr, "alfa-extcap: kein RTL8812AU gefunden\n"); libusb_exit(ctx); return 2; }
+    if (rc || !h) { fprintf(stderr, "alfa-extcap: no RTL8812AU found\n"); libusb_exit(ctx); return 2; }
 
-    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
+    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* enable the asynchronous RX path */
 
     if (rtl_hal_full_init(h, channel, 0, 0) != 0) {
-        fprintf(stderr, "alfa-extcap: Init fehlgeschlagen\n");
+        fprintf(stderr, "alfa-extcap: init failed\n");
         rtl_rx_unbind();
         if (claimed) libusb_release_interface(h, 0);
         libusb_close(h); libusb_exit(ctx); return 3;
@@ -72,7 +72,7 @@ static int do_capture(const char *fifo, int channel) {
     FILE *f = fopen(fifo, "wb");
     if (!f) { perror("alfa-extcap: fifo"); rtl_rx_unbind(); if (claimed) libusb_release_interface(h,0); libusb_close(h); libusb_exit(ctx); return 4; }
     rtl_rx_write_pcap_header(f);
-    rtl_rx_stream(h, f);        /* laeuft bis Wireshark den FIFO schliesst */
+    rtl_rx_stream(h, f);        /* runs until Wireshark closes the FIFO */
     fclose(f);
 
     rtl_rx_unbind();
@@ -88,10 +88,10 @@ int main(int argc, char **argv) {
     if (hasarg(argc, argv, "--capture")) {
         const char *fifo = argval(argc, argv, "--fifo");
         const char *chs  = argval(argc, argv, "--channel");
-        if (!fifo) { fprintf(stderr, "alfa-extcap: --fifo fehlt\n"); return 1; }
+        if (!fifo) { fprintf(stderr, "alfa-extcap: --fifo missing\n"); return 1; }
         return do_capture(fifo, chs ? atoi(chs) : 6);
     }
-    /* Ohne bekannte Option: Kurzhilfe. */
+    /* No known option: short help. */
     print_interfaces();
     return 0;
 }

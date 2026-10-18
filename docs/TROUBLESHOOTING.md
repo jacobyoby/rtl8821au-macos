@@ -61,20 +61,19 @@ password**, not the Wi-Fi password.
 
 ## Connection failures
 
-`alfa-netd` and `rtl_wpa` print some messages in German, from the upstream
-project. The common ones:
+The common messages from `alfa-netd` and `rtl_wpa`:
 
 | Message | Meaning | What to do |
 |---|---|---|
-| `Auth fehlgeschlagen` | Open authentication got no answer | Check the management endpoint for your chip; move closer |
-| `Assoc fehlgeschlagen` | Association got no answer or was refused | The access point may still hold the last session; wait a minute or make sure the previous run exited cleanly |
-| `keine msg3 (msg1 seen N times...)` | The access point rejected our handshake message 2 | Wrong password, or the SSID differs in case or spacing |
-| `Kein DHCP-OFFER` | No DHCP reply over the encrypted link | Usually follows a deauth; see the `[link]` lines above it |
+| `Auth failed` | Open authentication got no answer | Check the management endpoint for your chip; move closer |
+| `Assoc failed` | Association got no answer or was refused | The access point may still hold the last session; wait a minute or make sure the previous run exited cleanly |
+| `no msg3 (msg1 seen N times...)` | The access point rejected our handshake message 2 | Wrong password, or the SSID differs in case or spacing |
+| `No DHCP OFFER` | No DHCP reply over the encrypted link | Usually follows a deauth; see the `[link]` lines above it |
 
 ### Deauthentication reason codes
 
-`[link] AP hat uns deauthentifiziert (reason=N)` means the access point
-dropped the connection.
+`[link] AP deauthenticated us (reason=N)` means the access point dropped the
+connection.
 
 | Reason | Meaning | Seen when |
 |---|---|---|

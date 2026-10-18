@@ -21,29 +21,29 @@ int main(int argc, char **argv) {
     int with_cal  = (argc > 4) ? atoi(argv[4]) : 0;  /* 0 = RX-only (safe) */
 
     libusb_context *ctx = NULL;
-    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init fehlgeschlagen\n"); return 1; }
+    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init failed\n"); return 1; }
 
     libusb_device_handle *h = NULL;
     uint16_t vid = 0, pid = 0; int claimed = 0;
     int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
-    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("Kein bekannter Adapter gefunden. Adapter einstecken.\n"); libusb_exit(ctx); return 2; }
-    if (rc != 0 || !h) { fprintf(stderr, "Oeffnen fehlgeschlagen: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
-    printf("Geraet %04x:%04x, Claim: %s\n\n", vid, pid, claimed ? "OK" : "NICHT");
+    if (rc == LIBUSB_ERROR_NO_DEVICE) { printf("No supported adapter found. Plug in the adapter.\n"); libusb_exit(ctx); return 2; }
+    if (rc != 0 || !h) { fprintf(stderr, "Open failed: %s\n", libusb_error_name(rc)); libusb_exit(ctx); return 1; }
+    printf("Device %04x:%04x, Claim: %s\n\n", vid, pid, claimed ? "OK" : "NOT");
 
-    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
+    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* enable the asynchronous RX path */
 
     rc = rtl_hal_full_init(h, channel, with_cal, 1);
-    if (rc != 0) { printf("\nInbetriebnahme fehlgeschlagen (rc=%d). Abbruch.\n", rc); goto done; }
+    if (rc != 0) { printf("\nBring-up failed (rc=%d). Aborting.\n", rc); goto done; }
 
     FILE *f = fopen(out, "wb");
     if (!f) { perror("fopen"); rc = 1; goto done; }
     rtl_rx_write_pcap_header(f);
 
-    printf("\nMonitor auf Kanal %d, %d s -> %s\n", channel, seconds, out);
+    printf("\nMonitor on channel %d, %d s -> %s\n", channel, seconds, out);
     long n = rtl_rx_capture(h, f, seconds, 1);
     fclose(f);
-    printf("Fertig: %ld Frames geschrieben nach %s\n", n, out);
-    printf("Oeffnen mit:  wireshark %s   oder   tshark -r %s\n", out, out);
+    printf("Done: %ld frames written to %s\n", n, out);
+    printf("Open with:  wireshark %s   or   tshark -r %s\n", out, out);
 
 done:
     rtl_rx_unbind();

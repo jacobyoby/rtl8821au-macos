@@ -186,7 +186,7 @@ static void rf_set(libusb_device_handle *h, int path, uint16_t reg, uint32_t mas
 }
 
 /* ========================================================================= */
-/* IQK: Fill-IQC-Helfer                                                       */
+/* IQK: fill-IQC helpers                                                      */
 /* ========================================================================= */
 
 /* _iqk_rx_fill_iqc_8812a */

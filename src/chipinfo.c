@@ -12,40 +12,40 @@
 
 int main(void) {
     libusb_context *ctx = NULL;
-    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init fehlgeschlagen\n"); return 1; }
+    if (libusb_init(&ctx) != 0) { fprintf(stderr, "libusb_init failed\n"); return 1; }
 
     libusb_device_handle *h = NULL;
     uint16_t vid = 0, pid = 0; int claimed = 0;
     int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
     if (rc == LIBUSB_ERROR_NO_DEVICE) {
-        printf("Kein bekannter Adapter (rtl_ids.c) gefunden. Adapter einstecken.\n");
+        printf("No supported adapter (rtl_ids.c) found. Plug in the adapter.\n");
         libusb_exit(ctx); return 2;
     }
     if (rc != 0 || !h) {
-        fprintf(stderr, "Oeffnen fehlgeschlagen: %s\n", libusb_error_name(rc));
+        fprintf(stderr, "Open failed: %s\n", libusb_error_name(rc));
         libusb_exit(ctx); return 1;
     }
 
     const rtl_usb_id *id = rtl_usb_id_lookup(vid, pid);
-    printf("Geraet geoeffnet: %04x:%04x (%s, %s)   Interface-Claim: %s\n",
+    printf("Device opened: %04x:%04x (%s, %s)   Interface claim: %s\n",
            vid, pid, id ? rtl_chip_id_name(id->chip) : "?", id ? id->note : "?",
-           claimed ? "OK" : "NICHT geclaimt (Reads werden trotzdem versucht)");
+           claimed ? "OK" : "NOT claimed (reads will be attempted anyway)");
 
     /* --- Chip version from SYS_CFG --- */
     int r = 0;
     uint32_t sys = rtl_read32(h, REG_SYS_CFG, &r);
     if (r != 0) {
-        printf("\nSYS_CFG-Read FEHLER: %s\n", libusb_error_name(r));
-        printf("Deutet darauf hin, dass der Interface-Claim/das Seizing noch fehlt\n");
-        printf("(macOS-Klassentreiber) oder der Chip nicht mit Strom versorgt ist.\n");
+        printf("\nSYS_CFG read ERROR: %s\n", libusb_error_name(r));
+        printf("Indicates that the interface claim/seizing is still missing\n");
+        printf("(macOS class driver) or that the chip is not powered.\n");
     } else {
         printf("\nSYS_CFG (0x00F0) = 0x%08x\n", sys);
-        printf("  Chip-Typ     : %s\n", (sys & SYS_CFG_RTL_ID) ? "TEST-Chip" : "MP (normal)");
+        printf("  Chip type    : %s\n", (sys & SYS_CFG_RTL_ID) ? "TEST chip" : "MP (normal)");
         printf("  Vendor       : %s\n", (sys & SYS_CFG_VENDOR_ID) ? "UMC" : "TSMC");
-        printf("  Cut-Version  : %u (roh, +1 fuer 8812)\n",
+        printf("  Cut version  : %u (raw, +1 for 8812)\n",
                (sys & SYS_CFG_CHIP_VER_MASK) >> SYS_CFG_CHIP_VER_SHIFT);
         if (sys == 0xffffffff || sys == 0x00000000)
-            printf("  ! Wert unplausibel — vermutlich noch kein echter Register-Zugriff.\n");
+            printf("  ! Implausible value — probably no real register access yet.\n");
     }
 
     /* --- MAC address --- */
@@ -55,7 +55,7 @@ int main(void) {
         printf("\nMAC (0x0610) = %02x:%02x:%02x:%02x:%02x:%02x\n",
                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     } else {
-        printf("\nMAC-Read FEHLER: %s\n", libusb_error_name(r));
+        printf("\nMAC read ERROR: %s\n", libusb_error_name(r));
     }
 
     if (claimed) libusb_release_interface(h, 0);

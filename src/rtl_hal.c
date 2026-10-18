@@ -1,24 +1,24 @@
 /*
- * rtl_hal — Bring-up-Orchestrator ueber rtl_chip_ops.
+ * rtl_hal — bring-up orchestrator on top of rtl_chip_ops.
  *
- * Enthaelt bewusst KEINEN 8812AU-spezifischen Code mehr: Registeradressen,
- * Tabellen und Debug-Dumps stecken in der ops-Tabelle (rtl_chip.c).
+ * Deliberately contains NO 8812AU-specific code any more: register addresses,
+ * tables and debug dumps live in the ops table (rtl_chip.c).
  */
 #include "rtl_hal.h"
 #include <stdio.h>
 
-/* Pflichtschritt: fehlender Funktionszeiger = kaputte ops-Tabelle. */
+/* Mandatory step: missing function pointer = broken ops table. */
 #define STEP(fn, call, name) do {                                              \
-    if (!(fn)) { printf("[hal] %s: nicht implementiert\n", name); return -1; } \
+    if (!(fn)) { printf("[hal] %s: not implemented\n", name); return -1; }    \
     if (verbose) printf("[hal] %s ...\n", name);                               \
     int _rc = (call);                                                          \
     if (_rc != 0) {                                                            \
-        printf("[hal] %s FEHLGESCHLAGEN (rc=%d)\n", name, _rc);                \
+        printf("[hal] %s FAILED (rc=%d)\n", name, _rc);                        \
         return _rc;                                                            \
     }                                                                          \
 } while (0)
 
-/* Best-effort: darf fehlen und darf fehlschlagen. */
+/* Best-effort: may be missing and may fail. */
 #define TRY(fn, call) do { if (fn) { (call); } } while (0)
 
 void rtl_dev_bind(rtl_dev *dev, libusb_device_handle *h, uint16_t vid, uint16_t pid) {
@@ -41,7 +41,7 @@ void rtl_dev_bind_auto(rtl_dev *dev, libusb_device_handle *h) {
 }
 
 int rtl_hal_init_dev(rtl_dev *dev, int channel, int with_cal, int verbose) {
-    if (!dev || !dev->ops) { printf("[hal] keine ops gebunden\n"); return -1; }
+    if (!dev || !dev->ops) { printf("[hal] no ops bound\n"); return -1; }
 
     const rtl_chip_ops   *o = dev->ops;
     libusb_device_handle *h = dev->usb;
@@ -49,41 +49,41 @@ int rtl_hal_init_dev(rtl_dev *dev, int channel, int with_cal, int verbose) {
     if (verbose) printf("[hal] Chip: %s (%04x:%04x)\n", o->name, dev->vid, dev->pid);
 
     STEP(o->power_on,    o->power_on(h, verbose),       "Power-On");
-    STEP(o->fw_download, o->fw_download(h, verbose),    "Firmware-Download");
+    STEP(o->fw_download, o->fw_download(h, verbose),    "Firmware download");
 
-    /* Firmware explizit in PS_MODE_ACTIVE halten: sonst kann ihre autonome
-     * Power-Save nach einer TX-Pause still Unicast am AP puffern lassen --
-     * ohne Deauth, den man mitbekommen wuerde. Darf fehlschlagen. */
+    /* Explicitly keep the firmware in PS_MODE_ACTIVE: otherwise its autonomous
+     * power save can, after a TX pause, silently make the AP buffer unicast --
+     * without a deauth we would notice. May fail. */
     TRY(o->fw_active_mode, o->fw_active_mode(h, verbose));
 
-    STEP(o->mac_init,    o->mac_init(h, verbose),       "MAC-Init");
-    STEP(o->bb_init,     o->bb_init(h, verbose),        "BB-Init");
-    STEP(o->rf_init,     o->rf_init(h, verbose),        "RF-Init");
-    STEP(o->set_channel, o->set_channel(h, channel, 0), "Kanal setzen");
+    STEP(o->mac_init,    o->mac_init(h, verbose),       "MAC init");
+    STEP(o->bb_init,     o->bb_init(h, verbose),        "BB init");
+    STEP(o->rf_init,     o->rf_init(h, verbose),        "RF init");
+    STEP(o->set_channel, o->set_channel(h, channel, 0), "Set channel");
 
-    /* Efuse-kalibrierte TX-Power: ohne das sendet der Chip mit seinem rohen
-     * Post-Reset-Gain, weit unter Nennleistung. Ein Efuse-Lesefehler darf das
-     * Bring-up nicht abbrechen. */
+    /* Efuse-calibrated TX power: without it the chip transmits with its raw
+     * post-reset gain, far below rated power. An efuse read error must not
+     * abort the bring-up. */
     TRY(o->txpwr_apply, o->txpwr_apply(h, channel, verbose));
 
     if (with_cal) {
-        STEP(o->lck, o->lck(h, verbose), "LC-Kalibrierung");
-        STEP(o->iqk, o->iqk(h, verbose), "IQ-Kalibrierung");
+        STEP(o->lck, o->lck(h, verbose), "LC calibration");
+        STEP(o->iqk, o->iqk(h, verbose), "IQ calibration");
     }
 
-    STEP(o->set_monitor, o->set_monitor(h, verbose), "Monitor-RCR");
+    STEP(o->set_monitor, o->set_monitor(h, verbose), "Monitor RCR");
 
-    /* Pruefen, ob Kalibrierung oder Monitor-Setup die TX-AGC-Register
-     * zwischendurch zurueckgesetzt haben. */
-    TRY(o->txpwr_readback, o->txpwr_readback(h, "Ende rtl_hal_init_dev"));
+    /* Check whether calibration or monitor setup reset the TX AGC registers
+     * in the meantime. */
+    TRY(o->txpwr_readback, o->txpwr_readback(h, "end of rtl_hal_init_dev"));
     TRY(o->led_on, o->led_on(h));
 
     dev->channel = channel;
 
     if (verbose) {
         TRY(o->dbg_dump, o->dbg_dump(h));
-        printf("[hal] Init komplett, Kanal %d, Monitor aktiv%s.\n",
-               channel, with_cal ? " (kalibriert)" : " (RX-only, ohne Kalibrierung)");
+        printf("[hal] Init complete, channel %d, monitor active%s.\n",
+               channel, with_cal ? " (calibrated)" : " (RX-only, no calibration)");
     }
     return 0;
 }
@@ -94,8 +94,8 @@ int rtl_hal_set_channel(rtl_dev *dev, int channel, int verbose) {
     int rc = dev->ops->set_channel(dev->usb, channel, 0);
     if (rc != 0) return rc;
 
-    /* Die TX-Power-Kalibrierung ist kanalabhaengig -- beim Hopping muss sie
-     * mitgezogen werden, sonst gilt weiter der Wert des Init-Kanals. */
+    /* TX power calibration is channel-dependent -- it has to follow along when
+     * hopping, otherwise the init channel's value stays in effect. */
     TRY(dev->ops->txpwr_apply, dev->ops->txpwr_apply(dev->usb, channel, verbose));
 
     dev->channel = channel;

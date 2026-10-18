@@ -1,5 +1,5 @@
-# alfa-driver — Build fuer macOS Apple Silicon (arm64), Userspace via libusb.
-# Chips: RTL8812AU (rtl_chip.c) und RTL8821AU (rtl8821au.c), USB-IDs in rtl_ids.c.
+# alfa-driver — build for macOS Apple Silicon (arm64), userspace via libusb.
+# Chips: RTL8812AU (rtl_chip.c) and RTL8821AU (rtl8821au.c), USB IDs in rtl_ids.c.
 
 CC      ?= clang
 
@@ -15,14 +15,14 @@ endif
 CFLAGS  += -Wall -Wextra -O2 -arch arm64 $(LIBUSB_CFLAGS) -Isrc
 LDFLAGS += $(LIBUSB_LIBS)
 
-# Alle Header als Prerequisite: sonst rebuildet make nach einer reinen
-# Header-Aenderung nicht (es gibt keine .o-Zwischenstufe).
+# All headers as prerequisites: otherwise make does not rebuild after a
+# header-only change (there is no intermediate .o stage).
 HDRS := $(wildcard src/*.h)
 
-# Rezept: nur die .c-Dateien an den Compiler, Header rausfiltern.
+# Recipe: pass only the .c files to the compiler, filter out headers.
 BUILD = $(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDFLAGS)
 
-# Gemeinsame Chip-Module (Bring-up bis Monitor, inkl. ops-Tabelle und TX).
+# Shared chip modules (bring-up through monitor, incl. ops table and TX).
 CORE := src/rtl_usb.c src/rtl_ids.c src/rtl_init.c src/rtl_fw.c \
         src/fw_8812a_nic.c src/fw_8821a_nic.c \
         src/rtl_efuse.c src/rtl_led.c src/rtl_mac.c src/rtl_bb.c \
@@ -31,7 +31,7 @@ CORE := src/rtl_usb.c src/rtl_ids.c src/rtl_init.c src/rtl_fw.c \
         src/rtl8821au_phy.c src/rtl8821au_tables.c src/rtl8821au_cal.c \
         src/rtl8821au_txpwr.c
 
-# Bring-up + Empfangspfad (alles, was rtl_hal_full_init nutzt).
+# Bring-up + receive path (everything rtl_hal_full_init uses).
 HAL := src/rtl_hal.c src/rtl_rx.c $(CORE)
 
 BINS := usbprobe chipinfo initchip efuseinfo fwload ledtest stagetest \
@@ -40,7 +40,7 @@ BINS := usbprobe chipinfo initchip efuseinfo fwload ledtest stagetest \
 
 all: $(BINS)
 
-# --- Einzeltools ---
+# --- Standalone tools ---
 
 usbprobe: src/usbprobe.c src/rtl_ids.c $(HDRS)
 	$(BUILD)
@@ -66,7 +66,7 @@ ccmptest: src/ccmptest.c src/rtl_ccmp.c $(HDRS)
 stagetest: src/stagetest.c $(CORE) $(HDRS)
 	$(BUILD)
 
-# --- Tools mit vollem Bring-up + RX-Pfad (rtl_tx.c steckt in CORE!) ---
+# --- Tools with full bring-up + RX path (rtl_tx.c is in CORE!) ---
 
 monitor: src/monitor.c $(HAL) $(HDRS)
 	$(BUILD)

@@ -469,7 +469,7 @@ static int apply_mac_reg_table(libusb_device_handle *h, int verbose)
 	}
 
 	if (verbose)
-		printf("[mac] MAC-Reg-Tabelle angewandt: %d Writes (USB-Zweig)\n", writes);
+		printf("[mac] MAC reg table applied: %d writes (USB branch)\n", writes);
 	return 0;
 }
 
@@ -525,7 +525,7 @@ static int init_llt_table(libusb_device_handle *h, u8 txpktbuf_bndy, int verbose
 		return rc;
 
 	if (verbose)
-		printf("[mac] LLT-Tabelle initialisiert (bndy=0x%02x)\n", txpktbuf_bndy);
+		printf("[mac] LLT table initialized (bndy=0x%02x)\n", txpktbuf_bndy);
 	return 0;
 }
 
@@ -878,17 +878,17 @@ int rtl_mac_init(libusb_device_handle *h, int verbose)
 		cr |= (HCI_TXDMA_EN | HCI_RXDMA_EN | TXDMA_EN | RXDMA_EN
 		       | PROTOCOL_EN | SCHEDULE_EN | ENSEC | CALTMR_EN);
 		rc = rtl_write16(h, REG_CR, cr);
-		if (rc) { if (verbose) printf("[mac] CR-DMA-Enable fehlgeschlagen (%d)\n", rc); return rc; }
-		if (verbose) printf("[mac] CR-DMA-Block freigeschaltet -> CR=0x%04x\n", cr);
+		if (rc) { if (verbose) printf("[mac] CR DMA enable failed (%d)\n", rc); return rc; }
+		if (verbose) printf("[mac] CR DMA block enabled -> CR=0x%04x\n", cr);
 	}
 
 	/* 1) LLT table (in the HAL before the MAC config, right after power-on). */
 	rc = init_llt_table(h, txpktbuf_bndy, verbose);
-	if (rc) { if (verbose) printf("[mac] LLT-Init fehlgeschlagen (%d)\n", rc); return rc; }
+	if (rc) { if (verbose) printf("[mac] LLT init failed (%d)\n", rc); return rc; }
 
 	/* 2) PHY_MACConfig8812: apply the MAC register table. */
 	rc = apply_mac_reg_table(h, verbose);
-	if (rc) { if (verbose) printf("[mac] MAC-Reg-Tabelle fehlgeschlagen (%d)\n", rc); return rc; }
+	if (rc) { if (verbose) printf("[mac] MAC reg table failed (%d)\n", rc); return rc; }
 
 	/* 3) Queues / pages / priorities */
 	rc = init_queue_reserved_page(h, queue_sel);   if (rc) return rc;
@@ -915,7 +915,7 @@ int rtl_mac_init(libusb_device_handle *h, int verbose)
 	if (rc) return rc;
 
 	if (verbose)
-		printf("[mac] MAC-Init abgeschlossen (CR=0x%02x)\n",
+		printf("[mac] MAC init complete (CR=0x%02x)\n",
 		       rtl_read8(h, REG_CR, NULL));
 	return 0;
 }
@@ -964,7 +964,7 @@ int rtl_mac_set_monitor(libusb_device_handle *h, int verbose)
 
 	if (verbose) {
 		value32 = rtl_read32(h, REG_RCR, NULL);
-		printf("[mac] Monitor-Mode: RCR=0x%08x (Soll 0x90003B2F), "
+		printf("[mac] Monitor mode: RCR=0x%08x (expected 0x90003B2F), "
 		       "RXFLTMAP0/1/2=0xFFFF\n", value32);
 	}
 	return 0;

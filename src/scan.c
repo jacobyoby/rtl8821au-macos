@@ -41,7 +41,7 @@ static void scan_cb(const uint8_t *f, uint32_t len, void *v) {
     if (s->count < 512) {
         net_t *n = &s->nets[s->count++];
         memcpy(n->bssid, bssid, 6);
-        strncpy(n->ssid, ssid[0] ? ssid : "<versteckt>", 32);
+        strncpy(n->ssid, ssid[0] ? ssid : "<hidden>", 32);
         n->channel = s->cur_ch; n->privacy = privacy;
     }
 }
@@ -55,33 +55,34 @@ int main(int argc, char **argv) {
     if (libusb_init(&ctx) != 0) return 1;
     libusb_device_handle *h = NULL; uint16_t vid = 0, pid = 0; int claimed = 0;
     int rc = rtl_open_first_ex(ctx, &h, &vid, &pid, &claimed);
-    if (rc || !h) { printf("Kein bekannter Adapter gefunden.\n"); libusb_exit(ctx); return 2; }
-    printf("Geraet %04x:%04x. Inbetriebnahme ...\n", vid, pid);
+    if (rc || !h) { printf("No supported adapter found.\n"); libusb_exit(ctx); return 2; }
+    printf("Device %04x:%04x. Bringing up ...\n", vid, pid);
 
-    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* asynchronen RX-Pfad aktivieren */
-    if (rtl_hal_full_init(h, 1, 0, 0) != 0) { printf("Init fehlgeschlagen.\n"); goto done; }
+    rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* enable the asynchronous RX path */
+    if (rtl_hal_full_init(h, 1, 0, 0) != 0) { printf("Init failed.\n"); goto done; }
 
     scan_ctx s; memset(&s, 0, sizeof(s));
-    printf("Scanne %zu Kanaele (%d ms/Kanal) ...\n", sizeof(chans)/sizeof(int), dwell);
+    printf("Scanning %zu channels (%d ms/channel) ...\n", sizeof(chans)/sizeof(int), dwell);
     for (size_t i = 0; i < sizeof(chans)/sizeof(int); i++) {
         s.cur_ch = chans[i];
-        /* rtl_rf_set_channel() direkt statt rtl_hal_set_channel(): scan ist
-         * reiner RX-Betrieb (kein TX), die kanalabhaengige TX-Power-Nachfuehrung
-         * von rtl_hal_set_channel() waere hier wirkungslos. Fuer spaetere TX-
-         * faehige Tools mit Channel-Hopping ist rtl_hal_set_channel() gedacht. */
+        /* rtl_rf_set_channel() directly instead of rtl_hal_set_channel(): scan
+         * is pure RX operation (no TX), so the channel-dependent TX power
+         * tracking of rtl_hal_set_channel() would have no effect here.
+         * rtl_hal_set_channel() is meant for later TX-capable tools with
+         * channel hopping. */
         if (rtl_rx_bound_ops()->set_channel(h, chans[i], 0) != 0) continue;   /* chip ops, not the 8812AU routine */
         rtl_rx_poll(h, dwell, scan_cb, &s);
-        printf("\r  Kanal %3d  gefunden: %d Netze ", chans[i], s.count); fflush(stdout);
+        printf("\r  Channel %3d  found: %d networks ", chans[i], s.count); fflush(stdout);
     }
-    printf("\n\n%-32s %-18s %-5s %s\n", "SSID", "BSSID", "Kanal", "Verschl.");
+    printf("\n\n%-32s %-18s %-5s %s\n", "SSID", "BSSID", "Chan", "Encryption");
     printf("--------------------------------------------------------------------------\n");
     for (int i = 0; i < s.count; i++) {
         net_t *n = &s.nets[i];
         printf("%-32s %02x:%02x:%02x:%02x:%02x:%02x %-5d %s\n",
                n->ssid, n->bssid[0],n->bssid[1],n->bssid[2],n->bssid[3],n->bssid[4],n->bssid[5],
-               n->channel, n->privacy ? "WPA/WEP" : "offen");
+               n->channel, n->privacy ? "WPA/WEP" : "open");
     }
-    printf("\n%d Netze gefunden.\n", s.count);
+    printf("\n%d networks found.\n", s.count);
 
 done:
     rtl_rx_unbind();
