@@ -178,7 +178,7 @@ static int send_eapol(libusb_device_handle *h, uint16_t key_info,
     CCHmac(kCCHmacAlgSHA1, kck, 16, fr + e0, p - e0, dig);
     memcpy(fr + micpos, dig, 16);
 
-    return rtl_tx_inject(h, fr, p, RTL_RATE_6M, RTL_QSLT_VO, RTL_TX_EP_MGMT);
+    return rtl_tx_inject(h, fr, p, RTL_RATE_6M, RTL_QSLT_VO, rtl_rx_bound_ops()->tx_ep_mgmt);
 }
 
 /* Crypto self-test against the IEEE 802.11i test vector (no device needed). */
@@ -227,7 +227,7 @@ int main(int argc, char **argv) {
     /* Auth (Open) */
     uint8_t auth[30]={0xB0,0x00,0,0}; memcpy(auth+4,g_bssid,6); memcpy(auth+10,g_sa,6); memcpy(auth+16,g_bssid,6);
     auth[24]=0;auth[25]=0;auth[26]=1;auth[27]=0;auth[28]=0;auth[29]=0;
-    for (int i=0;i<8 && !s.got_auth;i++){ rtl_tx_inject(h,auth,30,RTL_RATE_6M,RTL_QSLT_MGNT,RTL_TX_EP_MGMT); rtl_rx_poll(h,150,cb,&s); }
+    for (int i=0;i<8 && !s.got_auth;i++){ rtl_tx_inject(h,auth,30,RTL_RATE_6M,RTL_QSLT_MGNT,rtl_rx_bound_ops()->tx_ep_mgmt); rtl_rx_poll(h,150,cb,&s); }
     if (!s.got_auth || s.auth_status!=0){ printf("Auth fehlgeschlagen (status %d).\n", s.auth_status); goto done; }
     printf("Auth OK.\n");
 
@@ -240,7 +240,7 @@ int main(int argc, char **argv) {
     { uint8_t r[]={0x01,0x08,0x02,0x04,0x0b,0x16,0x0c,0x12,0x18,0x24}; memcpy(as+p,r,10);p+=10; }
     { uint8_t er[]={0x32,0x04,0x30,0x48,0x60,0x6c}; memcpy(as+p,er,6);p+=6; }
     memcpy(as+p,rsn,sizeof(rsn)); p+=sizeof(rsn);
-    for (int i=0;i<8 && !s.got_assoc;i++){ rtl_tx_inject(h,as,p,RTL_RATE_6M,RTL_QSLT_MGNT,RTL_TX_EP_MGMT); rtl_rx_poll(h,150,cb,&s); }
+    for (int i=0;i<8 && !s.got_assoc;i++){ rtl_tx_inject(h,as,p,RTL_RATE_6M,RTL_QSLT_MGNT,rtl_rx_bound_ops()->tx_ep_mgmt); rtl_rx_poll(h,150,cb,&s); }
     if (!s.got_assoc || s.assoc_status!=0){ printf("Assoc fehlgeschlagen (status %d).\n", s.assoc_status); goto done; }
     printf("Assoziiert. Warte auf EAPOL msg1 ...\n");
 

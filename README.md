@@ -188,11 +188,17 @@ Reference for the port is Linux `rtw88` (`rtw8821a.c`, `rtw8821a_table.c`,
 | RF path A table, band switch to 2.4 GHz, post-RF MAC bits (`stagetest 5`) | works, `RF_A[0x18]` reads back the table value |
 | Channel switch 20 MHz, monitor RCR (`stagetest 7`) | works |
 | **Monitor-mode capture on 2.4 GHz (`monitor 6 10 out.pcap`)** | **works**: 4,340 frames in 10 s on channel 6, beacons with SSIDs, probe responses, RTS/CTS, block-acks. 42% FCS-clean (the RCR accepts CRC-error frames on purpose; no calibration yet) |
-| LCK / IQK calibration | stubbed, returns 0 so RX-only bring-up continues |
-| TX power from efuse, injection, scan / connect / internet | **not ported yet** |
+| IQK (`rtw8821a_do_iqk`, 20 MHz) | works: TX IQC converges (x=0x1fc..0x1fd, y=0); RX IQC results spread beyond rtw88's threshold on this unit and fall back to the default, as rtw88 itself would. LCK: none on 8821A in rtw88. FCS-clean rate 42% -> 47% |
+| Efuse TX power, 2.4 GHz path A, capped by the rtw88 limit table (`rtl8821au_txpwr.c`) | works: efuse CCK 42 / OFDM 48 capped to CCK 28 / OFDM 32 (worldwide rows; FCC/MKK/ETSI chosen by efuse country code "US"/"JP"/"EU") |
+| **Injection** (`inject 6 30 1`, `txtest 6`) | **works**: 30 probe requests -> 94 FCS-clean probe responses to our SA; `txtest` with the efuse MAC: 10 requests -> 14 clean responses, TX queues drain |
+| Scan (`scan`) | works on 2.4 GHz (hundreds of networks); 5 GHz found nothing, band switch untested |
+| `connect` / `alfa-netd` (WPA2 station, internet) | not tried yet |
 
-Unported steps print `[8821au] <step>: not ported yet`. Calibration is skipped
-with a message; TX power apply returns `ENOSYS` (it is a best-effort step).
+Every ops entry is now implemented for 2.4 GHz / 20 MHz / path A. The
+diagnostics tool `txtest [channel] [ep_hex] [qsel_hex] [count] [cal]` sends
+probe requests from the efuse MAC on a chosen endpoint/queue, dumps the TX
+queue registers and counts the responses; it is the quickest way to check a
+TX path change.
 
 ### Layout of the port
 
@@ -209,6 +215,15 @@ with a message; TX power apply returns `ENOSYS` (it is a best-effort step).
   but untested), post-RF MAC bits.
 - `src/rtl8821au_tables.c` — `rtw8821a_agc`, `rtw8821a_bb`, `rtw8821a_rf_a`
   generated from rtw88 (comments stripped, `0X` prefixes handled).
+- `src/rtl8821au_cal.c` — IQK (backup, LOK, TX IQK, RX IQK, result
+  averaging, fill, restore), initial gain (`rtl8821au_dig_set`, env
+  `RTL8821AU_IGI=<hex>` overrides the table value), CCK PD threshold.
+- `src/rtl8821au_txpwr.c` — efuse PG block -> CCK/OFDM/HT1S/VHT1S TX AGC
+  registers, limit rows for 2.4 GHz 20 MHz generated from
+  `rtw8821a_txpwr_lmt`.
+- `rtl_rx_bound_ops()` — tools take the management endpoint from the bound
+  ops table (`0x09` on the 8821AU, `0x02` on the 8812AU) instead of the
+  `RTL_TX_EP_MGMT` macro.
 - `src/fw_8821a_nic.c` — `rtw88/rtw8821a_fw.bin` from linux-firmware as a C
   array (sha256 in the file header; Realtek redistributable firmware licence).
 - `src/rtl_init.c` — the power-sequence interpreter is now generic
@@ -223,15 +238,15 @@ The USB 2.0 part has a different endpoint layout from the AWUS036ACH:
 bulk IN `0x84`, bulk OUT `0x05 0x06 0x08 0x09`, interrupt IN `0x87`.
 Per `rtw88` the four OUT pipes are high/beacon, VO/VI, BE/BK and management
 (`REG_TXDMA_PQ_MAP = 0xc5a0`).
-`rtl8821au_ops` carries that; the tools still pass the 8812AU macro
-`RTL_TX_EP_MGMT` directly and need to switch to `ops->tx_ep_mgmt`.
+`rtl8821au_ops` carries that and the tools use it via `rtl_rx_bound_ops()`.
 
 ### Next steps
 
-1. Calibration (`rtw8821a_phy_calibration`: LCK + IQK) and the initial
-   gain / DIG setup, which should raise the FCS-clean rate.
-2. Efuse TX power (`rtw88xxa_set_tx_power_index`, `rtw8821a_txpwr_lmt`) and
-   a TX descriptor check for the 1x1 part, then `inject` and `scan`.
-3. Switch the tools from the `RTL_TX_EP_MGMT` macro to `ops->tx_ep_mgmt`
-   (0x09 on this part), then `connect` / `alfa-netd`.
-4. 5 GHz: `switch_band(5G)` is ported but untested.
+1. `connect` and `alfa-netd` (WPA2 station + internet over utun), which
+   should mostly work now that TX, RX and the MAC register are in place.
+2. A dynamic DIG (false-alarm driven IGI, `rtw_phy_dig`) and a look at why
+   the RX IQK results scatter on this unit; both affect the FCS-clean rate.
+3. 5 GHz: `switch_band(5G)` is ported but untested; 5 GHz TX power and the
+   5 GHz limit rows are not.
+4. Power-by-rate offsets (`rtw8821a_bb_pg`) and power training, for HT/VHT
+   rates beyond the legacy ones used so far.

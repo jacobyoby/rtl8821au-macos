@@ -156,7 +156,7 @@ static int send_ip_frame(libusb_device_handle *h, const uint8_t dst_mac[6],
      * to get a DHCP reply at all, even though our RX/decrypt path is proven
      * healthy. Unlike EAPOL (unicast, hardware-ACKed, retried automatically),
      * these are unacked broadcasts -- reverting to the known-good queue. */
-    return rtl_tx_inject(h, frame, flen, RTL_RATE_6M, RTL_QSLT_MGNT, RTL_TX_EP_MGMT);
+    return rtl_tx_inject(h, frame, flen, RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt);
 }
 
 /* ---- Group Key Handshake message 2 (ack for a GTK rekey) ----
@@ -197,7 +197,7 @@ static int send_group_key_ack(libusb_device_handle *h, const uint8_t rep[8]) {
 
     uint8_t frame[200]; int flen = 0;
     rtl_ccmp_encrypt_frame(K.tk, hdr, 24, body, p, tx_pn++, frame, &flen);
-    return rtl_tx_inject(h, frame, flen, RTL_RATE_6M, RTL_QSLT_VO, RTL_TX_EP_MGMT);
+    return rtl_tx_inject(h, frame, flen, RTL_RATE_6M, RTL_QSLT_VO, rtl_rx_bound_ops()->tx_ep_mgmt);
 }
 
 /* ---- IPv4/UDP-Pruefsumme ---- */
@@ -336,7 +336,7 @@ static void arp_request_plain(libusb_device_handle *h, const uint8_t *target_ip)
     fr[q++]=0; fr[q++]=0;
     uint8_t snap[8]={0xAA,0xAA,0x03,0,0,0,0x08,0x06}; memcpy(fr+q,snap,8); q+=8;
     memcpy(fr+q,a,28); q+=28;
-    rtl_tx_inject(h, fr, q, RTL_RATE_6M, RTL_QSLT_MGNT, RTL_TX_EP_MGMT);
+    rtl_tx_inject(h, fr, q, RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt);
 }
 
 /* ---- RX-Dispatch ---- */

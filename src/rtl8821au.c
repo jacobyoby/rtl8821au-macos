@@ -29,8 +29,12 @@
  *   [x] RF init                      rf path A table, switch_band(2G), post-RF
  *                                    MAC bits
  *   [x] channel / bandwidth          rtw88xxa_set_channel, 20 MHz verified path
- *   [ ] LCK / IQK                    rtw8821a_phy_calibration (skipped, returns 0)
- *   [ ] TX power from efuse          rtw8821a_txpwr_lmt + efuse layout
+ *   [x] IQK                          rtl8821au_cal.c (rtw8821a_do_iqk, 20 MHz)
+ *   [x] LCK                          none on 8821A in rtw88 (no-op)
+ *   [x] initial gain                 rtl8821au_dig_set, env RTL8821AU_IGI to override
+ *   [x] TX power from efuse          rtl8821au_txpwr.c: 2.4 GHz path A, CCK/OFDM/
+ *                                    HT1S/VHT1S rows, capped by the rtw88 limit
+ *                                    table (FCC/MKK/ETSI by efuse country, else min)
  *   [ ] TX descriptor                verify 88xxA TX desc for the 1x1 part
  *   [ ] tools use ops->tx_ep_mgmt    associate/alfa_netd/inject still pass the
  *                                    8812AU macro RTL_TX_EP_MGMT (0x02) directly
@@ -576,20 +580,12 @@ static int rtl8821au_mac_init(libusb_device_handle *h, int verbose) {
     return 0;
 }
 
-/* ---- not ported yet ------------------------------------------------------ */
-static int not_ported(const char *step) {
-    printf("[8821au] %s: not ported yet (see rtw88 rtw8821a.c / rtw88xxa.c)\n", step);
-    return RTL_ENOSYS;
-}
-static int skip_lck      (libusb_device_handle *h, int v)        { (void)h; (void)v; printf("[8821au] lck: not ported, skipped\n"); return 0; }
-static int skip_iqk      (libusb_device_handle *h, int v)        { (void)h; (void)v; printf("[8821au] iqk: not ported, skipped\n"); return 0; }
-static int np_txpwr_apply(libusb_device_handle *h, int c, int v) { (void)h; (void)c; (void)v; return not_ported("txpwr_apply"); }
 
 static void rtl8821au_dbg_dump(libusb_device_handle *h) {
-    printf("[hal] Readback: SYS_CFG=0x%08x CR=0x%04x MCUFWDL=0x%08x RCR=0x%08x RF_A[0x18]=0x%05x\n",
+    printf("[hal] Readback: SYS_CFG=0x%08x CR=0x%04x MCUFWDL=0x%08x RCR=0x%08x RF_A[0x18]=0x%05x IGI=0x%02x\n",
            rtl_read32(h, REG_SYS_CFG, NULL), rtl_read16(h, REG_CR, NULL),
            rtl_read32(h, REG_MCUFWDL, NULL), rtl_read32(h, 0x0608, NULL),
-           rtl8821a_rf_read(h, 0x18, 0xFFFFF));
+           rtl8821a_rf_read(h, 0x18, 0xFFFFF), rtl8821au_dig_get(h));
 }
 
 const rtl_chip_ops rtl8821au_ops = {
@@ -604,10 +600,10 @@ const rtl_chip_ops rtl8821au_ops = {
     .rf_init        = rtl8821au_rf_init,
     .set_channel    = rtl8821au_set_channel,
     .set_monitor    = rtl_mac_set_monitor,       /* same RCR/MSR/RXFLTMAP registers */
-    .lck            = skip_lck,
-    .iqk            = skip_iqk,
-    .txpwr_apply    = np_txpwr_apply,
-    .txpwr_readback = NULL,                     /* optional (TRY) */
+    .lck            = rtl8821au_lck,
+    .iqk            = rtl8821au_iqk,
+    .txpwr_apply    = rtl8821au_txpwr_apply,    /* efuse base capped by rtw88 limit table */
+    .txpwr_readback = rtl8821au_txpwr_readback,
     .led_on         = NULL,                     /* optional: LED register differs, port later */
     .led_off        = NULL,
     .dbg_dump       = rtl8821au_dbg_dump,

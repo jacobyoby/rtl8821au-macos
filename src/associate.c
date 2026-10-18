@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
     auth[28]=0x00; auth[29]=0x00;           /* status */
     printf("Sende Authentication (Open) an %s ...\n", argv[2]);
     for (int i = 0; i < 8 && c.auth_status < 0; i++) {
-        rtl_tx_inject(h, auth, sizeof(auth), RTL_RATE_6M, RTL_QSLT_MGNT, RTL_TX_EP_MGMT);
+        rtl_tx_inject(h, auth, sizeof(auth), RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt);
         rtl_rx_poll(h, 200, cb, &c);
     }
     if (c.auth_status < 0) { printf("Keine Auth-Response erhalten.\n"); goto done; }
@@ -100,7 +100,7 @@ int main(int argc, char **argv) {
       memcpy(assoc+p,rsn,sizeof(rsn)); p+=sizeof(rsn); }
     printf("Sende Association Request (SSID \"%s\") ...\n", ssid);
     for (int i = 0; i < 8 && c.assoc_status < 0; i++) {
-        rtl_tx_inject(h, assoc, p, RTL_RATE_6M, RTL_QSLT_MGNT, RTL_TX_EP_MGMT);
+        rtl_tx_inject(h, assoc, p, RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt);
         rtl_rx_poll(h, 200, cb, &c);
     }
     if (c.assoc_status < 0) { printf("Keine Assoc-Response erhalten.\n"); goto done; }

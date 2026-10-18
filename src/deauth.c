@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
 
     long ok = 0, err = 0;
     for (int i = 0; i < count; i++) {
-        int r = rtl_tx_inject(h, frame, flen, RTL_RATE_6M, RTL_QSLT_MGNT, RTL_TX_EP_MGMT);
+        int r = rtl_tx_inject(h, frame, flen, RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt);
         if (r == 0) ok++; else { err++; if (err <= 3) printf("  TX-Fehler: %s\n", libusb_error_name(r)); }
         usleep(50000);   /* 50ms zwischen Frames -- aireplay-ng's Standardtakt */
     }

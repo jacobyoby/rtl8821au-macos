@@ -16,6 +16,7 @@
 #include "rtl8821au.h"
 #include "rtl_usb.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -147,6 +148,14 @@ const rtl8821a_board *rtl8821a_board_info(libusb_device_handle *h, int verbose) 
     b->rf_antenna_option= map[EF_RF_ANT_OPT];
     b->rfe_option       = map[EF_RFE_OPTION];
     memcpy(b->mac, &map[EF_MAC_8821AU], 6);
+    memcpy(b->pg2g, &map[0x10], 12);
+    b->country[0] = map[0xcb]; b->country[1] = map[0xcc];
+    /* rtw88 keys the limit table off the efuse country code; "US" -> FCC,
+     * EU codes -> ETSI, "JP" -> MKK, anything else worldwide (min). */
+    if (b->country[0] == 'U' && b->country[1] == 'S') b->regd = 0;
+    else if (b->country[0] == 'J' && b->country[1] == 'P') b->regd = 1;
+    else if (b->country[0] == 'E' && b->country[1] == 'U') b->regd = 2;
+    else b->regd = -1;
 
     /* rtw_chip_efuse_info_setup (generic, main.c) */
     b->ext_pa_2g  = (b->pa_type     & BIT(4)) ? 1 : 0;
@@ -162,10 +171,12 @@ const rtl8821a_board *rtl8821a_board_info(libusb_device_handle *h, int verbose) 
     if (verbose)
         printf("[8821au] board: cut=%u xtal=0x%02x thermal=0x%02x pa=0x%02x lna2g=0x%02x lna5g=0x%02x "
                "board_opt=0x%02x rfe_opt=0x%02x bbswing2g=0x%02x btcoex=%d ext(pa2g=%u lna2g=%u pa5g=%u lna5g=%u) "
-               "phy_rfe=0x%02x mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+               "phy_rfe=0x%02x country=%c%c regd=%d mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
                b->cut, b->xtal_k, b->thermal, b->pa_type, b->lna_type_2g, b->lna_type_5g,
                b->rf_board_option, b->rfe_option, b->tx_bb_swing_2g, b->btcoex,
                b->ext_pa_2g, b->ext_lna_2g, b->ext_pa_5g, b->ext_lna_5g, b->phy_rfe,
+               (b->country[0] >= 0x20 && b->country[0] < 0x7f) ? b->country[0] : '?',
+               (b->country[1] >= 0x20 && b->country[1] < 0x7f) ? b->country[1] : '?', b->regd,
                b->mac[0], b->mac[1], b->mac[2], b->mac[3], b->mac[4], b->mac[5]);
     return b;
 }
@@ -454,6 +465,15 @@ int rtl8821au_rf_init(libusb_device_handle *h, int verbose) {
     rtl_write8(h, REG_USB_HRPWM, 0);
     set32(h, REG_FWHW_TXQ_CTRL, BIT(12));              /* ack for xmit mgmt frames */
 
-    if (verbose) printf("[8821au] rf init done, band 2G\n");
+    /* initial gain: rtw88 runs a dynamic DIG from the BB table's start value;
+     * we keep the table value unless RTL8821AU_IGI (hex) is set, and start
+     * the CCK power-detect threshold at level 0 like rtw_phy_cck_pd_init. */
+    {
+        const char *e = getenv("RTL8821AU_IGI");
+        if (e && *e) rtl8821au_dig_set(h, (uint8_t)strtoul(e, NULL, 16));
+        rtl8821au_cck_pd_set(h, 0);
+        if (verbose) printf("[8821au] rf init done, band 2G, IGI=0x%02x%s\n",
+                            rtl8821au_dig_get(h), e ? " (from RTL8821AU_IGI)" : "");
+    }
     return 0;
 }

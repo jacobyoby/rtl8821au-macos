@@ -59,7 +59,7 @@ int main(int argc, char **argv) {
 
     long tx_ok = 0, tx_err = 0, resp = 0;
     for (int i = 0; i < count; i++) {
-        int r = rtl_tx_inject(h, probe, (int)sizeof(probe), RTL_RATE_6M, RTL_QSLT_MGNT, RTL_TX_EP_MGMT);
+        int r = rtl_tx_inject(h, probe, (int)sizeof(probe), RTL_RATE_6M, RTL_QSLT_MGNT, rtl_rx_bound_ops()->tx_ep_mgmt);
         if (r == 0) tx_ok++; else { tx_err++; if (tx_err <= 3) printf("  TX-Fehler: %s\n", libusb_error_name(r)); }
         resp += rtl_rx_pump(h, f, 150);   /* listen 150ms after each probe */
     }

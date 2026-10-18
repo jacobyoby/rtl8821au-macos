@@ -28,6 +28,9 @@ typedef struct {
     int     btcoex;              /* REG_WL_BT_PWR_CTRL[18] */
     uint8_t ant_div_cfg;         /* 0 (disabled in vendor driver) */
     uint8_t phy_rfe;             /* rtw_phy_cond.rfe as built by rtw_phy_setup_phy_cond */
+    uint8_t pg2g[12];            /* 0x10..0x1b: cck_base[6], bw40_base[5], ht_1s_diff */
+    uint8_t country[2];          /* 0xcb, 0xcc */
+    int     regd;                /* 0 FCC, 1 MKK, 2 ETSI, -1 worldwide */
 } rtl8821a_board;
 
 /* Reads (once, cached) the efuse map and chip version. Needs power-on. */
@@ -36,6 +39,17 @@ const rtl8821a_board *rtl8821a_board_info(libusb_device_handle *h, int verbose);
 /* RF path A register access (rtw88xxa_phy_read_rf / rtw_phy_write_rf_reg_sipi). */
 uint32_t rtl8821a_rf_read (libusb_device_handle *h, uint8_t addr, uint32_t mask);
 int      rtl8821a_rf_write(libusb_device_handle *h, uint8_t addr, uint32_t mask, uint32_t data);
+
+/* rtl8821au_txpwr.c */
+int  rtl8821au_txpwr_apply(libusb_device_handle *h, int ch, int verbose);
+void rtl8821au_txpwr_readback(libusb_device_handle *h, const char *label);
+
+/* rtl8821au_cal.c */
+int rtl8821au_iqk(libusb_device_handle *h, int verbose);
+int rtl8821au_lck(libusb_device_handle *h, int verbose);   /* no-op on 8821A */
+int rtl8821au_dig_set(libusb_device_handle *h, uint8_t igi);
+uint8_t rtl8821au_dig_get(libusb_device_handle *h);
+int rtl8821au_cck_pd_set(libusb_device_handle *h, int lvl);  /* 0..4 */
 
 /* ops entries implemented in rtl8821au_phy.c */
 int rtl8821au_bb_init    (libusb_device_handle *h, int verbose);

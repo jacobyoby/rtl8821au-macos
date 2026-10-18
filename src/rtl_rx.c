@@ -31,6 +31,7 @@ void rtl_rx_bind(libusb_context *ctx, const rtl_chip_ops *ops) {
 static const rtl_chip_ops *ops_or_default(void) {
     return g_ops ? g_ops : rtl_chip_default();
 }
+const rtl_chip_ops *rtl_rx_bound_ops(void) { return ops_or_default(); }
 
 /* ------------------------------------------------------------------ */
 /* LED (nur aus dem Hauptthread, NIE aus einem libusb-Callback)        */

@@ -20,6 +20,10 @@
  */
 void rtl_rx_bind(libusb_context *ctx, const rtl_chip_ops *ops);
 
+/* Die gebundene ops-Tabelle (oder rtl_chip_default()). Tools nehmen daraus
+ * z.B. tx_ep_mgmt statt des 8812AU-Makros RTL_TX_EP_MGMT. */
+const rtl_chip_ops *rtl_rx_bound_ops(void);
+
 /* MUSS vor libusb_release_interface()/libusb_close() aufgerufen werden:
  * stoppt die persistente Engine und wartet, bis alle URBs zurueck sind.
  * Ohne das laufen beim Schliessen noch Transfers auf das Handle. */

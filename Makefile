@@ -28,14 +28,15 @@ CORE := src/rtl_usb.c src/rtl_ids.c src/rtl_init.c src/rtl_fw.c \
         src/rtl_efuse.c src/rtl_led.c src/rtl_mac.c src/rtl_bb.c \
         src/rtl_rf.c src/rtl_cal.c src/rtl_txpwr.c \
         src/rtl_tx.c src/rtl_chip.c src/rtl8821au.c \
-        src/rtl8821au_phy.c src/rtl8821au_tables.c
+        src/rtl8821au_phy.c src/rtl8821au_tables.c src/rtl8821au_cal.c \
+        src/rtl8821au_txpwr.c
 
 # Bring-up + Empfangspfad (alles, was rtl_hal_full_init nutzt).
 HAL := src/rtl_hal.c src/rtl_rx.c $(CORE)
 
 BINS := usbprobe chipinfo initchip efuseinfo fwload ledtest stagetest \
         monitor inject ledscan alfa-extcap scan associate connect \
-        ccmptest alfa-netd deauth
+        ccmptest alfa-netd deauth txtest
 
 all: $(BINS)
 
@@ -92,6 +93,9 @@ alfa-netd: src/alfa_netd.c src/rtl_wpa.c src/rtl_ccmp.c $(HAL) $(HDRS)
 	$(BUILD)
 
 deauth: src/deauth.c $(HAL) $(HDRS)
+	$(BUILD)
+
+txtest: src/txtest.c $(HAL) $(HDRS)
 	$(BUILD)
 
 clean:
