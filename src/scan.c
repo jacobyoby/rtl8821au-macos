@@ -184,7 +184,7 @@ static void fmt_dbm(char *buf, size_t sz, int dbm, int adj) {
 
 /* -a: every BSSID on its own row. */
 static void print_all(const scan_ctx *s) {
-    printf("\n%-32s %-17s %5s %6s %5s  %-16s %s\n",
+    printf("\n\n%-32s %-17s %5s %6s %5s  %-16s %s\n",
            "SSID", "BSSID", "Chan", "Signal", "Peak", "Security", "Same router as");
     printf("------------------------------------------------------------------------------------------------------------\n");
     int any_adj = 0, n_hidden = 0, n_revealed = 0, n_sibling = 0;
@@ -260,7 +260,7 @@ static void print_grouped(const scan_ctx *s) {
         revealed[rep[i]] |= s->nets[i].hidden && s->nets[i].ssid[0];
     }
 
-    printf("\n%-32s %6s  %-12s %3s  %-16s %s\n",
+    printf("\n\n%-32s %6s  %-12s %3s  %-16s %s\n",
            "SSID", "Signal", "Channels", "APs", "Security", "Same router");
     printf("----------------------------------------------------------------------------------------\n");
     for (int i = 0; i < s->count; i++) {
