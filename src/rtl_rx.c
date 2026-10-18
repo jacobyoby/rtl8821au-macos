@@ -67,7 +67,9 @@ void rtl_rx_write_pcap_header(FILE *f) {
 
 typedef struct { FILE *f; int broken; int live; } pcap_sink;
 
-static void pcap_cb(const uint8_t *frame, uint32_t len, void *v) {
+static void pcap_cb(const uint8_t *frame, uint32_t len, const rtl_rx_sub *rx,
+                    void *v) {
+    (void)rx;
     pcap_sink *s = (pcap_sink *)v;
     if (s->broken) return;
 
@@ -92,7 +94,7 @@ static void pcap_cb(const uint8_t *frame, uint32_t len, void *v) {
 /* ------------------------------------------------------------------ */
 
 static long parse_bulk(const rtl_chip_ops *ops, const uint8_t *buf, int total,
-                       rtl_frame_cb cb, void *ctx) {
+                       rtl_frame_ex_cb cb, void *ctx) {
     long n = 0;
     const uint8_t *p = buf;
     int left = total;
@@ -101,7 +103,7 @@ static long parse_bulk(const rtl_chip_ops *ops, const uint8_t *buf, int total,
         rtl_rx_sub sub;
         if (ops->rx_parse_desc(p, left, &sub) != 0) break;
         if (!sub.is_report) {
-            cb(p + sub.hdr_len, sub.pkt_len, ctx);
+            cb(p + sub.hdr_len, sub.pkt_len, &sub, ctx);
             n++;
         }
         if (sub.advance == 0 || (int)sub.advance > left) break;
@@ -128,7 +130,7 @@ typedef struct {
     volatile int stop;
     volatile int fatal;
     volatile int activity;
-    rtl_frame_cb cb;
+    rtl_frame_ex_cb cb;
     void        *cbctx;
     rx_stats    *st;
 } rx_engine;
@@ -176,7 +178,7 @@ static void LIBUSB_CALL xfer_done(struct libusb_transfer *t) {
 }
 
 static int engine_start(rx_engine *e, libusb_device_handle *h,
-                        const rtl_chip_ops *ops, rtl_frame_cb cb, void *ctx,
+                        const rtl_chip_ops *ops, rtl_frame_ex_cb cb, void *ctx,
                         rx_stats *st) {
     memset(e, 0, sizeof(*e));
     e->h = h; e->ops = ops; e->cb = cb; e->cbctx = ctx; e->st = st;
@@ -237,7 +239,7 @@ static void engine_run(rx_engine *e, int ms, const volatile int *abort) {
 /* ------------------------------------------------------------------ */
 
 static void sync_run(libusb_device_handle *h, const rtl_chip_ops *ops, int ms,
-                     rtl_frame_cb cb, void *ctx, const volatile int *abort,
+                     rtl_frame_ex_cb cb, void *ctx, const volatile int *abort,
                      rx_stats *st) {
     uint8_t *buf = malloc(RX_BUF_SIZE);
     if (!buf) return;
@@ -272,7 +274,7 @@ static rx_engine g_eng;
 static int       g_eng_live = 0;
 
 /* Common entry point: picks async if bound, otherwise sync. */
-static void rx_run(libusb_device_handle *h, int ms, rtl_frame_cb cb, void *ctx,
+static void rx_run(libusb_device_handle *h, int ms, rtl_frame_ex_cb cb, void *ctx,
                    const volatile int *abort, rx_stats *st) {
     const rtl_chip_ops *ops = ops_or_default();
     if (!g_ctx) { sync_run(h, ops, ms, cb, ctx, abort, st); return; }
@@ -304,10 +306,26 @@ void rtl_rx_unbind(void) {
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
-long rtl_rx_poll(libusb_device_handle *h, int ms, rtl_frame_cb cb, void *ctx) {
+long rtl_rx_poll_ex(libusb_device_handle *h, int ms, rtl_frame_ex_cb cb, void *ctx) {
     rx_stats st = {0};
     rx_run(h, ms, cb, ctx, NULL, &st);
     return st.frames;
+}
+
+/* rtl_frame_cb adapter: the engine drops cb/ctx after each run, so a
+ * stack-allocated wrapper is safe. */
+typedef struct { rtl_frame_cb cb; void *ctx; } plain_cb;
+
+static void plain_adapter(const uint8_t *frame, uint32_t len,
+                          const rtl_rx_sub *rx, void *v) {
+    (void)rx;
+    const plain_cb *p = (const plain_cb *)v;
+    p->cb(frame, len, p->ctx);
+}
+
+long rtl_rx_poll(libusb_device_handle *h, int ms, rtl_frame_cb cb, void *ctx) {
+    plain_cb p = { cb, ctx };
+    return rtl_rx_poll_ex(h, ms, plain_adapter, &p);
 }
 
 long rtl_rx_pump(libusb_device_handle *h, FILE *f, int ms) {

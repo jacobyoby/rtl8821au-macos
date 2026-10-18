@@ -38,4 +38,12 @@ long rtl_rx_stream (libusb_device_handle *h, FILE *f);
 typedef void (*rtl_frame_cb)(const uint8_t *frame, uint32_t len, void *ctx);
 long rtl_rx_poll(libusb_device_handle *h, int ms, rtl_frame_cb cb, void *ctx);
 
+/* Like rtl_rx_poll, but the callback also gets the parsed RX descriptor:
+ * CRC flag, rate, signal level and pointers to the raw descriptor and PHY
+ * status (valid only during the callback). Frames with a CRC error are
+ * delivered too; the caller decides whether to drop them. */
+typedef void (*rtl_frame_ex_cb)(const uint8_t *frame, uint32_t len,
+                                const rtl_rx_sub *rx, void *ctx);
+long rtl_rx_poll_ex(libusb_device_handle *h, int ms, rtl_frame_ex_cb cb, void *ctx);
+
 #endif /* RTL_RX_H */

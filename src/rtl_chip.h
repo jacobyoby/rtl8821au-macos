@@ -20,7 +20,18 @@ typedef struct {
     uint32_t pkt_len;    /* length of the 802.11 frame                          */
     uint32_t advance;    /* bytes to the next subframe (already 8-aligned)      */
     int      is_report;  /* !=0 -> C2H/report, not an 802.11 frame              */
+
+    /* Per-frame RX metadata. desc/phy point into the USB buffer and are only
+     * valid for the duration of the frame callback. */
+    const uint8_t *desc;     /* RX descriptor (rxdesc_size bytes)                */
+    const uint8_t *phy;      /* PHY status (drvinfo), NULL if not present         */
+    uint32_t phy_len;        /* bytes at phy                                      */
+    int      crc_err;        /* !=0 -> FCS check failed, frame is corrupt         */
+    uint8_t  rate;           /* DESC_RATE index: 0-3 CCK, 4-11 OFDM, 12+ HT/VHT   */
+    int      rssi_dbm;       /* path A signal level, RTL_RSSI_NONE if unknown     */
 } rtl_rx_sub;
+
+#define RTL_RSSI_NONE (-128)
 
 typedef struct rtl_chip_ops {
     const char     *name;

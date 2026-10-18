@@ -22,8 +22,16 @@ static uint32_t le32(const uint8_t *p) {
 
 /*
  * RX descriptor 88xxA (include/rtl8812a_recv.h; rtw88 rx.h, identical for 8821A):
- *   dword0 [13:0] pkt_len, [19:16] drvinfo_size (x8), [25:24] shift
+ *   dword0 [13:0] pkt_len, [14] crc_err, [19:16] drvinfo_size (x8),
+ *          [25:24] shift, [26] physt (drvinfo holds the PHY status)
  *   dword2 [28]   rpt_sel (C2H/report instead of 802.11 frame)
+ *   dword3 [6:0]  rx rate (DESC_RATE index)
+ * The PHY status starts right after the 24-byte descriptor.
+ *
+ * Signal level: only the OFDM formula is shared by the 88xxA chips (rtw88
+ * rtw88xxa_query_phy_status: path A AGC gain & 0x7f, minus 110). The CCK LNA
+ * table is chip-specific, so CCK frames keep RTL_RSSI_NONE here and a chip
+ * wrapper (rtl8821au.c) fills it in.
  */
 int rtl88xxa_rx_parse_desc(const uint8_t *p, int avail, rtl_rx_sub *out) {
     if (avail <= 24) return -1;
@@ -48,6 +56,16 @@ int rtl88xxa_rx_parse_desc(const uint8_t *p, int avail, rtl_rx_sub *out) {
     out->pkt_len   = pkt_len;
     out->advance   = adv;
     out->is_report = (int)((d2 >> 28) & 0x01u);
+
+    uint32_t d3 = le32(p + 12);
+    out->desc     = p;
+    out->phy      = (((d0 >> 26) & 0x01u) && drv > 0) ? p + 24 : NULL;
+    out->phy_len  = out->phy ? drv : 0;
+    out->crc_err  = (int)((d0 >> 14) & 0x01u);
+    out->rate     = (uint8_t)(d3 & 0x7Fu);
+    out->rssi_dbm = RTL_RSSI_NONE;
+    if (out->phy && out->rate > 3)
+        out->rssi_dbm = (int)(out->phy[0] & 0x7Fu) - 110;
     return 0;
 }
 

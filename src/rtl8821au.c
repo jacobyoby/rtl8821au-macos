@@ -593,6 +593,25 @@ static void rtl8821au_dbg_dump(libusb_device_handle *h) {
            rtl8821a_rf_read(h, 0x18, 0xFFFFF), rtl8821au_dig_get(h));
 }
 
+/*
+ * 88xxA descriptor parse plus the 8821A CCK signal level (rtw88
+ * rtw8821a_cck_rx_pwr): PHY status byte 5 is the CCK AGC report,
+ * lna = [7:5], vga = [4:0], dBm = base[lna] - 2 * vga. LNA index 3 and
+ * 6/7 have no entry in rtw88, so those frames stay RTL_RSSI_NONE.
+ */
+static int rtl8821au_rx_parse_desc(const uint8_t *p, int avail, rtl_rx_sub *out) {
+    static const int8_t lna_base[8] = { 15, -1, -17, 0, -30, -38, 0, 0 };
+    static const uint8_t lna_ok = 0x37;          /* lna 0,1,2,4,5 */
+
+    int rc = rtl88xxa_rx_parse_desc(p, avail, out);
+    if (rc != 0 || out->rate > 3 || !out->phy || out->phy_len < 6) return rc;
+
+    uint8_t lna = out->phy[5] >> 5, vga = out->phy[5] & 0x1F;
+    if (lna_ok & (1u << lna))
+        out->rssi_dbm = lna_base[lna] - 2 * vga;
+    return rc;
+}
+
 const rtl_chip_ops rtl8821au_ops = {
     .name           = "RTL8821AU",
     .chip           = RTL_CHIP_8821AU,
@@ -627,6 +646,6 @@ const rtl_chip_ops rtl8821au_ops = {
     .rxdesc_size    = 24,
     .txdesc_size    = RTL_TXDESC_SIZE,
 
-    .rx_parse_desc  = rtl88xxa_rx_parse_desc,
+    .rx_parse_desc  = rtl8821au_rx_parse_desc,
     .tx_inject      = rtl_tx_inject,            /* 88xxA TX desc, verify for 1x1 */
 };
