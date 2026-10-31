@@ -58,7 +58,7 @@ static long c_dup_dropped = 0;     /* 802.11 retry duplicates filtered out (see 
 static long c_gtk_rekey_seen = 0, c_gtk_rekey_acked = 0; /* Group Key Handshake (GTK rekey) seen/acked */
 static int     g_pend_arp = 0;          /* ARP reply queued by on_frame, sent from the main loop */
 static uint8_t g_pend_arp_mac[6], g_pend_arp_ip[4];
-static long c_ack_to_us = 0;      /* 802.11 ACK frames with RA == us (needs RCR_ACF) */
+static long c_ack_to_us = 0;      /* 802.11 ACK frames with RA == us (monitor RCR has ACF set) */
 static int  g_tim_set = 0;         /* beacon TIM bit for our AID (see on_frame) */
 static long c_keepalive = 0;
 static long c_beacon_seen = 0;     /* Beacons from our BSSID -- proves RX hardware is alive even if unicast stalls */
@@ -554,6 +554,7 @@ int main(int argc, char **argv) {
     for (int a = 2; a < argc; a++) {
         if (!strcmp(argv[a], "--default")) want_default = 1;
         else if (!strcmp(argv[a], "--psk-stdin")) psk_stdin = 1;
+        else { printf("Unknown option: %s\nUsage: sudo %s <ssid> [--default] [--psk-stdin]\n", argv[a], argv[0]); return 1; }
     }
 
     /* Find the Apple Wi-Fi device (e.g. en0). */
@@ -631,14 +632,16 @@ int main(int argc, char **argv) {
     printf("Settle 800ms after connecting ...\n");
     for (int r=0;r<6;r++) rtl_rx_poll(h,150,on_frame,h);
 
-    /* Isolation test BEFORE DHCP: does ANY encrypted broadcast DATA frame we
-     * send get a reply from anything on the network? ARP is nearly universal
-     * (any live host answers "who has <ip>") and much simpler than DHCP, so
-     * this tells us whether the problem is DHCP/server-specific or affects
-     * all our encrypted broadcast TX. Probe a few likely-live IPs including
-     * the known gateway. */
-    { uint8_t probe_ip[4] = {192,168,178,1};
-      printf("ARP isolation test A: sending 5x ARP-who-has 192.168.178.1 (encrypted/CCMP broadcast) ...\n");
+    /* Optional isolation test BEFORE DHCP (debugging aid): does ANY encrypted
+     * broadcast DATA frame we send get a reply? ARP is nearly universal and
+     * much simpler than DHCP, so this separates DHCP/server problems from
+     * broken encrypted broadcast TX. Opt-in with ALFA_ARP_PROBE=<IPv4 of a
+     * live host on the network>, e.g. the router. */
+    const char *probe_env = getenv("ALFA_ARP_PROBE");
+    struct in_addr probe_in;
+    if (probe_env && inet_pton(AF_INET, probe_env, &probe_in) == 1) {
+      uint8_t probe_ip[4]; memcpy(probe_ip, &probe_in.s_addr, 4);
+      printf("ARP isolation test A: sending 5x ARP-who-has %s (encrypted/CCMP broadcast) ...\n", probe_env);
       for (int t=0;t<5;t++){ arp_request(h,probe_ip); rtl_rx_poll(h,300,on_frame,h); }
       long enc_replies = c_arp_reply_any;
       printf("  Replies: %ld\n", enc_replies);
@@ -646,15 +649,13 @@ int main(int argc, char **argv) {
       /* Test B sends an UNENCRYPTED data frame after the keys are installed.
        * That is a protocol violation; WPA3-transition / PMF-capable APs (seen
        * live on an eero-style AP) answer it with deauth reason 2 and drop the
-       * association, so it is opt-in now: ALFA_PLAIN_TEST=1. */
+       * association, so it is opt-in too: ALFA_PLAIN_TEST=1. */
       long plain_replies = 0;
       if (getenv("ALFA_PLAIN_TEST")) {
-        printf("ARP isolation test B: sending 5x ARP-who-has 192.168.178.1 (PLAIN/unencrypted broadcast) ...\n");
+        printf("ARP isolation test B: sending 5x ARP-who-has %s (PLAIN/unencrypted broadcast) ...\n", probe_env);
         for (int t=0;t<5;t++){ arp_request_plain(h,probe_ip); rtl_rx_poll(h,300,on_frame,h); }
         plain_replies = c_arp_reply_any - enc_replies;
         printf("  Replies: %ld\n", plain_replies);
-      } else {
-        printf("ARP isolation test B (PLAIN) skipped: set ALFA_PLAIN_TEST=1 to enable (otherwise APs with PMF deauth us).\n");
       }
 
       if (enc_replies>0)
@@ -665,6 +666,8 @@ int main(int argc, char **argv) {
         printf("  -> PLAIN broadcast TX gets no reply either -> general broadcast data TX failure\n"
                "     (independent of encryption; a policy drop of unencrypted data frames\n"
                "      on the network is also possible and would explain this result).\n");
+    } else if (probe_env) {
+      printf("ALFA_ARP_PROBE=%s is not an IPv4 address, ARP isolation test skipped.\n", probe_env);
     }
 
     /* DHCP */
@@ -760,8 +763,6 @@ int main(int argc, char **argv) {
         for(int r=0;r<6 && !g_have_gw_mac;r++) rtl_rx_poll(h,150,on_frame,h); }
     printf("Gateway MAC: %s\n", g_have_gw_mac?"ok":"unknown (using broadcast)");
 
-    { uint32_t rcr = rtl_read32(h, 0x0608, NULL) | (1u << 12);   /* RCR_ACF: see ACKs addressed to us (diagnostic) */
-      rtl_write32(h, 0x0608, rcr); }
     printf("\nBridge running. Test e.g.:  ping -c3 %u.%u.%u.%u\n",
            g_gw_ip[0],g_gw_ip[1],g_gw_ip[2],g_gw_ip[3]);
     printf("(First version — routing/DHCP fine-tuning after your test run.)\n");

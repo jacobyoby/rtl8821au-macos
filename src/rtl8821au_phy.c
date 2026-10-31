@@ -115,13 +115,24 @@ static uint32_t rd_mask(libusb_device_handle *h, uint16_t r, uint32_t mask) {
 }
 static int wr_mask(libusb_device_handle *h, uint16_t r, uint32_t mask, uint32_t val) {
     /* rtw_write32_mask */
-    uint32_t v = rtl_read32(h, r, NULL);
+    int rc = 0; uint32_t v = rtl_read32(h, r, &rc);
+    if (rc) return rc;
     return rtl_write32(h, r, (v & ~mask) | ((val << ffs32(mask)) & mask));
 }
-static void set8 (libusb_device_handle *h, uint16_t r, uint8_t b)  { rtl_write8(h, r, rtl_read8(h, r, NULL) | b); }
-static void clr8 (libusb_device_handle *h, uint16_t r, uint8_t b)  { rtl_write8(h, r, rtl_read8(h, r, NULL) & (uint8_t)~b); }
-static void set32(libusb_device_handle *h, uint16_t r, uint32_t b) { rtl_write32(h, r, rtl_read32(h, r, NULL) | b); }
-static void clr32(libusb_device_handle *h, uint16_t r, uint32_t b) { rtl_write32(h, r, rtl_read32(h, r, NULL) & ~b); }
+/* Read-modify-write helpers: on a read error the register is left alone
+ * instead of being rewritten from a 0 read. */
+static void set8 (libusb_device_handle *h, uint16_t r, uint8_t b)  {
+    int rc = 0; uint8_t v = rtl_read8(h, r, &rc);   if (!rc) rtl_write8(h, r, v | b);
+}
+static void clr8 (libusb_device_handle *h, uint16_t r, uint8_t b)  {
+    int rc = 0; uint8_t v = rtl_read8(h, r, &rc);   if (!rc) rtl_write8(h, r, v & (uint8_t)~b);
+}
+static void set32(libusb_device_handle *h, uint16_t r, uint32_t b) {
+    int rc = 0; uint32_t v = rtl_read32(h, r, &rc); if (!rc) rtl_write32(h, r, v | b);
+}
+static void clr32(libusb_device_handle *h, uint16_t r, uint32_t b) {
+    int rc = 0; uint32_t v = rtl_read32(h, r, &rc); if (!rc) rtl_write32(h, r, v & ~b);
+}
 
 /* ---- board info from efuse ---------------------------------------------- */
 static rtl8821a_board g_board;

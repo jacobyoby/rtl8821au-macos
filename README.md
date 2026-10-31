@@ -4,7 +4,7 @@
 Monitor mode, packet injection and a WPA2 internet client for RTL8812AU and
 RTL8821AU adapters, with no kext, no DriverKit, no SIP changes and no VM.
 
-[![Build](https://github.com/YOUR-GITHUB-USER/rtl8821au-macos/actions/workflows/build.yml/badge.svg)](https://github.com/YOUR-GITHUB-USER/rtl8821au-macos/actions/workflows/build.yml)
+[![Build](https://github.com/jacobyoby/rtl8821au-macos/actions/workflows/build.yml/badge.svg)](https://github.com/jacobyoby/rtl8821au-macos/actions/workflows/build.yml)
 ![Platform](https://img.shields.io/badge/platform-macOS%20arm64-lightgrey)
 [![License: GPL v2](https://img.shields.io/badge/license-GPL--2.0-blue)](LICENSE)
 
@@ -66,7 +66,7 @@ brew install libusb
 **2. Build:**
 
 ```bash
-git clone https://github.com/YOUR-GITHUB-USER/rtl8821au-macos.git
+git clone https://github.com/jacobyoby/rtl8821au-macos.git
 cd rtl8821au-macos
 make
 ```

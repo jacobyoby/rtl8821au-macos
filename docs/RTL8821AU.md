@@ -77,7 +77,8 @@ frames capable (CCMP, PSK and SAE). Each of these cost a debugging round:
    `rtl_wpa_leave()` runs on every exit path.
 2. **Never send plaintext data after the keys are installed.** The access
    point deauths with reason 2 and then 7 for everything. `alfa-netd`'s
-   unencrypted ARP test is opt-in (`ALFA_PLAIN_TEST=1`) for that reason.
+   ARP isolation test is opt-in (`ALFA_ARP_PROBE=<router IP>`), and its
+   unencrypted half needs `ALFA_PLAIN_TEST=1` on top, for that reason.
 3. **Use software sequence numbers.** With hardware sequencing, our
    retransmissions reached the access point as duplicates and were dropped;
    unicast died after a few frames.

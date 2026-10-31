@@ -177,14 +177,36 @@
 extern unsigned char array_rtw8821a_fw[];
 extern const unsigned int array_rtw8821a_fw_len;
 
-static void set8(libusb_device_handle *h, uint16_t r, uint8_t b) { rtl_write8(h, r, rtl_read8(h, r, NULL) | b); }
-static void clr8(libusb_device_handle *h, uint16_t r, uint8_t b) { rtl_write8(h, r, rtl_read8(h, r, NULL) & (uint8_t)~b); }
-static void set16(libusb_device_handle *h, uint16_t r, uint16_t b) { rtl_write16(h, r, rtl_read16(h, r, NULL) | b); }
-static void set32(libusb_device_handle *h, uint16_t r, uint32_t b) { rtl_write32(h, r, rtl_read32(h, r, NULL) | b); }
+/* Read-modify-write helpers. A failed read would return 0 and the write would
+ * then clear every other bit, so on a read error the register is left alone. */
+static void rmw_fail(uint16_t r, int rc) {
+    printf("  [rmw] read of 0x%04x failed (%d), write skipped\n", r, rc);
+}
+static void set8(libusb_device_handle *h, uint16_t r, uint8_t b) {
+    int rc = 0; uint8_t v = rtl_read8(h, r, &rc);
+    if (rc) { rmw_fail(r, rc); return; }
+    rtl_write8(h, r, v | b);
+}
+static void clr8(libusb_device_handle *h, uint16_t r, uint8_t b) {
+    int rc = 0; uint8_t v = rtl_read8(h, r, &rc);
+    if (rc) { rmw_fail(r, rc); return; }
+    rtl_write8(h, r, v & (uint8_t)~b);
+}
+static void set16(libusb_device_handle *h, uint16_t r, uint16_t b) {
+    int rc = 0; uint16_t v = rtl_read16(h, r, &rc);
+    if (rc) { rmw_fail(r, rc); return; }
+    rtl_write16(h, r, v | b);
+}
+static void set32(libusb_device_handle *h, uint16_t r, uint32_t b) {
+    int rc = 0; uint32_t v = rtl_read32(h, r, &rc);
+    if (rc) { rmw_fail(r, rc); return; }
+    rtl_write32(h, r, v | b);
+}
 static void mask32(libusb_device_handle *h, uint16_t r, uint32_t mask, uint32_t val) {
     /* rtw_write32_mask: val is placed at the mask's lowest set bit */
     uint32_t shift = 0; while (shift < 32 && !(mask & (1u << shift))) shift++;
-    uint32_t v = rtl_read32(h, r, NULL);
+    int rc = 0; uint32_t v = rtl_read32(h, r, &rc);
+    if (rc) { rmw_fail(r, rc); return; }
     rtl_write32(h, r, (v & ~mask) | ((val << shift) & mask));
 }
 
@@ -216,11 +238,10 @@ static int llt_init(libusb_device_handle *h, uint32_t boundary, int verbose) {
 static void reset_8051_8821a(libusb_device_handle *h) {
     clr8(h, REG_RSV_CTRL, BIT(1));          /* Reset MCU IO Wrapper */
     clr8(h, REG_RSV_CTRL + 1, BIT(0));
-    uint8_t v = rtl_read8(h, REG_SYS_FUNC_EN + 1, NULL);
-    rtl_write8(h, REG_SYS_FUNC_EN + 1, v & (uint8_t)~BIT(2));   /* hold 8051 */
+    clr8(h, REG_SYS_FUNC_EN + 1, BIT(2));   /* hold 8051 */
     clr8(h, REG_RSV_CTRL, BIT(1));          /* Enable MCU IO Wrapper */
     set8(h, REG_RSV_CTRL + 1, BIT(0));
-    rtl_write8(h, REG_SYS_FUNC_EN + 1, v | BIT(2));             /* release 8051 */
+    set8(h, REG_SYS_FUNC_EN + 1, BIT(2));   /* release 8051 */
 }
 
 /* rtw88xxau_hw_reset: lightweight deinit if firmware RAM code is running
@@ -239,7 +260,7 @@ static int hw_reset_8821a(libusb_device_handle *h, int verbose) {
     rtl_write8(h, REG_MCUFWDL, 0x00);
 
     /* before BB reset should do clock gated */
-    rtl_write32(h, REG_FPGA0_XCD_RF_PARA, rtl_read32(h, REG_FPGA0_XCD_RF_PARA, NULL) | BIT(6));
+    set32(h, REG_FPGA0_XCD_RF_PARA, BIT(6));
     clr8(h, REG_SYS_FUNC_EN, BIT(0) | BIT(1));   /* reset BB */
     rtl_write8(h, REG_RF_CTRL, 0);               /* reset RF */
     rtl_write16(h, REG_CR, 0);                   /* reset TRX path */
@@ -312,7 +333,7 @@ static int rtl8821au_power_on(libusb_device_handle *h, int verbose) {
     rtl_write16(h, REG_CR, 0);
     uint16_t cr = CR_HCI_TXDMA_EN | CR_HCI_RXDMA_EN | CR_TXDMA_EN | CR_RXDMA_EN |
                   CR_PROTOCOL_EN | CR_SCHEDULE_EN | CR_MAC_SEC_EN | CR_32K_CAL_TMR_EN;
-    rtl_write16(h, REG_CR, rtl_read16(h, REG_CR, NULL) | cr);
+    set16(h, REG_CR, cr);
 
     /* 8821A only: LDO tweak when SYS_CFG1[24] is set */
     if (rtl_read8(h, REG_SYS_CFG1 + 3, NULL) & BIT(0))

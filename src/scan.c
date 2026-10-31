@@ -25,8 +25,10 @@
 
 typedef struct {
     uint8_t bssid[6]; char ssid[33]; int channel; int privacy;
+    int     heard;                       /* a beacon/probe response arrived (not only a client frame) */
     int     hidden;                      /* beacon carries an empty/zeroed SSID */
     int     hidden_len;                  /* length of that SSID element (0 = empty) */
+    int     ssid_uses;                   /* BSSIDs carrying this SSID, set before printing */
     int     peak_dbm;                    /* RTL_RSSI_NONE until a sample arrives */
     int     adj_peak_dbm;                /* strongest sample from a neighbouring channel */
     int8_t  samples[MAX_SAMPLES];
@@ -96,19 +98,18 @@ static void scan_cb(const uint8_t *f, uint32_t len, const rtl_rx_sub *rx, void *
     case 0x20:            body = 10; break;         /* + current AP address */
     default: return;
     }
-    if ((int)len < 24 + body + 2) return;
+    /* Monitor RCR sets APPFCS: the last 4 bytes are the FCS, not IEs. */
+    if ((int)len < 24 + body + 2 + 4) return;
     if (rx->crc_err) { s->crc_dropped++; return; }
     const uint8_t *bssid = f + 16;                  /* addr3 */
     if (bssid[0] & 0x01) return;                    /* group bit: never a real BSSID */
 
     char ssid[33]; int ssid_len, ds_ch;
-    parse_ies(f + 24 + body, (int)len - 24 - body, ssid, &ssid_len, &ds_ch);
+    parse_ies(f + 24 + body, (int)len - 24 - body - 4, ssid, &ssid_len, &ds_ch);
     net_t *n = find_net(s, bssid);
 
-    if (fc == 0x00 || fc == 0x20) {                 /* client frame: name only */
-        if (n && !n->ssid[0] && ssid[0]) memcpy(n->ssid, ssid, sizeof(n->ssid));
-        return;
-    }
+    int client = (fc == 0x00 || fc == 0x20);
+    if (client && (!ssid[0] || (n && n->ssid[0]))) return;
 
     if (!n) {
         if (s->count >= MAX_NETS) return;
@@ -117,6 +118,11 @@ static void scan_cb(const uint8_t *f, uint32_t len, const rtl_rx_sub *rx, void *
         n->channel = ds_ch ? ds_ch : s->cur_ch;
         n->peak_dbm = n->adj_peak_dbm = RTL_RSSI_NONE;
     }
+    if (client) {                                   /* client frame: name only */
+        memcpy(n->ssid, ssid, sizeof(n->ssid));     /* the AP's beacon adds the rest */
+        return;
+    }
+    n->heard = 1;
     uint16_t caps = (uint16_t)(f[34] | (f[35] << 8)); /* Capability (24+8+2) */
     n->privacy = (caps & 0x0010) ? 1 : 0;
     if (ssid[0]) {
@@ -170,9 +176,7 @@ static int named_sibling(const scan_ctx *s, int i) {
         if (j == i || !s->nets[j].ssid[0]) continue;
         int sc = sibling_score(s->nets[i].bssid, s->nets[j].bssid);
         if (sc < 0) continue;
-        int uses = 0;
-        for (int k = 0; k < s->count; k++) uses += !strcmp(s->nets[k].ssid, s->nets[j].ssid);
-        if (uses > 3) sc += 8192;
+        if (s->nets[j].ssid_uses > 3) sc += 8192;
         if (best < 0 || sc < best_score) { best = j; best_score = sc; }
     }
     return best;
@@ -199,6 +203,12 @@ static void fmt_dbm(char *buf, size_t sz, int dbm, int adj) {
     else                      snprintf(buf, sz, adj ? ">%d" : "%d", dbm);
 }
 
+static void net_name(const net_t *n, char name[33]) {
+    if (n->ssid[0])          snprintf(name, 33, "%s", n->ssid);
+    else if (n->hidden_len)  snprintf(name, 33, "<hidden, %d chars>", n->hidden_len);
+    else                     snprintf(name, 33, "<hidden>");
+}
+
 /* -a: every BSSID on its own row. */
 static void print_all(const scan_ctx *s) {
     printf("\n\n%s%-32s %-17s %5s %6s %5s  %-16s %s%s\n", C_BOLD,
@@ -212,9 +222,7 @@ static void print_all(const scan_ctx *s) {
         fmt_dbm(sig, sizeof(sig), dbm, adj);
         fmt_dbm(peak, sizeof(peak), adj ? dbm : n->peak_dbm, adj);
         any_adj |= adj;
-        if (n->ssid[0])          snprintf(name, sizeof(name), "%s", n->ssid);
-        else if (n->hidden_len)  snprintf(name, sizeof(name), "<hidden, %d chars>", n->hidden_len);
-        else                     snprintf(name, sizeof(name), "<hidden>");
+        net_name(n, name);
         n_hidden   += n->hidden;
         n_revealed += n->hidden && n->ssid[0];
         char sec[17];
@@ -244,12 +252,6 @@ static void print_all(const scan_ctx *s) {
     if (any_adj)
         printf(">dBm: only heard from a neighbouring channel, real level is higher.\n");
     printf("%s", C_OFF);
-}
-
-static void net_name(const net_t *n, char name[33]) {
-    if (n->ssid[0])          snprintf(name, 33, "%s", n->ssid);
-    else if (n->hidden_len)  snprintf(name, 33, "<hidden, %d chars>", n->hidden_len);
-    else                     snprintf(name, 33, "<hidden>");
 }
 
 /*
@@ -364,6 +366,7 @@ int main(int argc, char **argv) {
     printf("Device %04x:%04x. Bringing up ...\n", vid, pid);
 
     rtl_rx_bind(ctx, rtl_chip_probe(vid, pid));   /* enable the asynchronous RX path */
+    int ret = 1;
     if (rtl_hal_full_init(h, 1, 0, 0) != 0) { printf("Init failed.\n"); goto done; }
 
     static scan_ctx s; memset(&s, 0, sizeof(s));
@@ -375,17 +378,30 @@ int main(int argc, char **argv) {
          * tracking of rtl_hal_set_channel() would have no effect here.
          * rtl_hal_set_channel() is meant for later TX-capable tools with
          * channel hopping. */
-        if (rtl_rx_bound_ops()->set_channel(h, chans[i], 0) != 0) continue;   /* chip ops, not the 8812AU routine */
+        if (rtl_rx_bound_ops()->set_channel(h, chans[i], 0) != 0) {           /* chip ops, not the 8812AU routine */
+            printf("\r  Channel %3d  could not be set, skipped\n", chans[i]);
+            continue;
+        }
         rtl_rx_poll_ex(h, dwell, scan_cb, &s);
         printf("\r  Channel %3d  found: %d networks ", chans[i], s.count); fflush(stdout);
     }
 
+    /* Drop BSSIDs only named by a client frame whose AP was never heard. */
+    int kept = 0;
+    for (int i = 0; i < s.count; i++)
+        if (s.nets[i].heard) s.nets[kept++] = s.nets[i];
+    s.count = kept;
+
     qsort(s.nets, (size_t)s.count, sizeof(net_t), cmp_signal);
+    for (int i = 0; i < s.count; i++)
+        for (int k = 0; k < s.count; k++)
+            s.nets[i].ssid_uses += !strcmp(s.nets[k].ssid, s.nets[i].ssid);
     if (all) print_all(&s); else print_grouped(&s);
+    ret = 0;
 
 done:
     rtl_rx_unbind();
     if (claimed) libusb_release_interface(h, 0);
     libusb_close(h); libusb_exit(ctx);
-    return 0;
+    return ret;
 }
