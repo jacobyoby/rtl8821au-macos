@@ -5,6 +5,8 @@ All notable changes to this fork are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-31
+
 ### Added
 
 - **RTL8821AU / RTL8811AU support**, ported from Linux `rtw88`: power-on,
